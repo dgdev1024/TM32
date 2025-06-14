@@ -54,13 +54,13 @@ workspace "TM32"
         }
     filter {}
 
-    -- Project: `TM32` - TM32 CPU Library
-    project "TM32"
+    -- Project: `tm32` - TM32 CPU Library
+    project "tm32"
         kind        "StaticLib"
-        location    "./build/%{outputdir}/TM32"
+        location    "./build/%{outputdir}/tm32"
         targetdir   "./build/%{outputdir}/bin"
-        objdir      "./build/%{outputdir}/obj/TM32"
-        files       { "./projects/TM32/**.hpp", "./projects/TM32/**.cpp" }
+        objdir      "./build/%{outputdir}/obj/tm32"
+        files       { "./projects/tm32/**.hpp", "./projects/tm32/**.cpp" }
         includedirs { 
             "./projects", 
             table.unpack(external_includes) 
@@ -73,3 +73,31 @@ workspace "TM32"
             pic             "On"
             defines         { "TM32_LINUX" }
         filter {}
+
+    -- Project: `tm32asm` - TM32 CPU Assembler
+    project "tm32asm"
+        kind        "ConsoleApp"
+        location    "./build/%{outputdir}/tm32asm"
+        targetdir   "./build/%{outputdir}/bin"
+        objdir      "./build/%{outputdir}/obj/tm32asm"
+        files       { "./projects/tm32asm/**.hpp", "./projects/tm32asm/**.cpp" }
+        includedirs { 
+            "./projects", 
+            table.unpack(external_includes) 
+        }
+        
+    -- Project: `tomboy` - TM32 Virtual Machine
+    project "tomboy"
+        kind        "ConsoleApp"
+        location    "./build/%{outputdir}/tomboy"
+        targetdir   "./build/%{outputdir}/bin"
+        objdir      "./build/%{outputdir}/obj/tomboy"
+        files       { "./projects/tomboy/**.hpp", "./projects/tomboy/**.cpp" }
+        includedirs { 
+            "./projects", 
+            table.unpack(external_includes) 
+        }
+        links {
+            "tm32",
+            table.unpack(external_links)
+        }
