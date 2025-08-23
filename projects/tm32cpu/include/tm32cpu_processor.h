@@ -174,9 +174,8 @@ typedef enum
  * 
  * The TM32 CPU can internally set the `EC` register as its way of throwing
  * exceptions. This enumeration maps the error codes to these exceptions. When
- * the `EC` register is set in this way, the processor will also set the
- * Stop flag (`T`) in the Flags register, which will cause the processor to
- * stop running until reset.
+ * the `EC` register is set in this way, the processor will automatically call
+ * interrupt vector 0 to handle the exception, regardless of interrupt flags.
  */
 typedef enum
 {
@@ -253,6 +252,30 @@ TM32CPU_API void TM32CPU_DestroyProcessor (
  *          `false` if an error occurred during execution.
  */
 TM32CPU_API bool TM32CPU_StepProcessor (
+    TM32CPU_Processor* processor
+);
+
+/**
+ * @brief   Wakes the TM32CPU Processor from STOP mode.
+ * 
+ * This function is used by virtual hardware components to wake the processor
+ * from ultra-low power STOP mode when external wake-up events occur (such as
+ * button presses, serial communication completion, or other hardware events).
+ * 
+ * Unlike HALT mode which can be woken by any interrupt, STOP mode requires
+ * explicit external wake-up events, making this function essential for proper
+ * Game Boy-inspired behavior.
+ * 
+ * If the processor is not currently in STOP mode (i.e., the Stop flag is not
+ * set), this function does nothing and simply returns true.
+ * 
+ * @param   processor   Points to the TM32CPU processor instance.
+ * 
+ * @return  `true` if the processor was woken successfully or was not in a
+ *          STOP state;
+ *         `false` if an error occurred during the wake-up process.
+ */
+TM32CPU_API bool TM32CPU_WakeProcessor (
     TM32CPU_Processor* processor
 );
 
@@ -554,6 +577,42 @@ TM32CPU_API uint8_t TM32CPU_GetErrorCode (
 TM32CPU_API void TM32CPU_SetErrorCode (
     TM32CPU_Processor*  processor,
     uint8_t             errorCode
+);
+
+/**
+ * @brief   Checks if the TM32CPU Processor is currently in a HALT state.
+ * 
+ * The HALT state is a low-power mode where the processor stops executing
+ * instructions and waits for an interrupt to resume. This is different from
+ * the STOP state, which requires an explicit wake-up event to resume.
+ * 
+ * The HALT state is exited when an interrupt is requested, regardless of
+ * whether or not its bit in the interrupt enable register (`INTENABLE`)
+ * is set, or whether or not the interrupt master enable flag (`IME`) is set.
+ * 
+ * @param   processor   Points to the TM32CPU processor instance.
+ * 
+ * @return  `true` if the processor is in a HALT state;
+ *          `false` otherwise.
+ */
+TM32CPU_API bool TM32CPU_IsHalted (
+    const TM32CPU_Processor* processor
+);
+
+/**
+ * @brief   Checks if the TM32CPU Processor is currently in a STOP state.
+ * 
+ * The STOP state is an ultra-low power mode where the processor halts all
+ * operations and waits for an explicit, external wake-up event to resume.
+ * This is different from the HALT state, which can be exited by any interrupt.
+ * 
+ * @param   processor   Points to the TM32CPU processor instance.
+ * 
+ * @return  `true` if the processor is in a STOP state;
+ *          `false` otherwise.
+ */
+TM32CPU_API bool TM32CPU_IsStopped (
+    const TM32CPU_Processor* processor
 );
 
 /**

@@ -143,15 +143,16 @@ register indicates:
 
 - Bit `0`: `T` - Stop Flag
     - Set by the `STOP` instruction.
-    - Set when the `EC` register is internally set (not by the `SEC` instruction).
-    - CPU refuses to run when this flag is set.
-    - Can only be cleared by resetting the CPU.
+    - CPU enters ultra-low power standby mode when this flag is set.
+    - Can only be cleared by external wake-up conditions or resetting the CPU.
 - Bit `1`: `L` - Halt Flag
     - Set by the `HALT` instruction.
     - CPU does not execute any further instructions when this flag is set.
+    - Provides moderate power savings compared to normal operation.
     - Cleared when an interrupt is pending, even when its corresponding bit in
       `IE` is clear, or the `IME` is off.
     - Can also be cleared by resetting the CPU.
+    - **Note**: Unlike `STOP`, `HALT` can be easily woken by any interrupt condition.
 - Bit `2`: `P` - Parity Flag
     - Set when the result of the last instruction has an even number of set bits.
     - Used for execution conditions by the control-transfer instructions.
@@ -185,13 +186,83 @@ indicate whether or not something has gone wrong. This register is set by one
 of the following circumstances:
 
 - An exception occurs, such as an invalid instruction or an access to an
-    invalid memory address. In this case, the Stop flag is also set, preventing
-    the CPU from operating any further.
+    invalid memory address. In this case, interrupt vector 0 is called in order
+    to handle the exception.
 - The `SEC XX` instruction can be used to explicitly set the `EC` register to a
     user-defined value. This does not set the Stop flag.
 - The `CEC` instruction sets the `EC` register to zero.
 
-### 3.5 The Stack and the Stack Pointer Register
+### 3.5 The `STOP` Instruction and Ultra-Low Power Mode
+
+The `STOP` instruction is designed to put the TM32 CPU into an ultra-low power
+standby mode, significantly reducing power consumption when the system is idle.
+This instruction is particularly useful for battery-powered applications or when
+the system hasn't detected user input for an extended period.
+
+#### Behavior
+
+When the `STOP` instruction is executed:
+
+1. **Stop Flag**: The Stop flag (bit 0) in the Flags register is set.
+2. **CPU State**: The CPU enters ultra-low power standby mode and ceases normal
+   instruction execution.
+3. **Hardware Effects**: Virtual hardware components powered by the TM32 may
+   enter their own low-power states or maintain minimal functionality.
+4. **Memory Preservation**: All register contents and memory state are preserved
+   during STOP mode.
+
+#### Wake-up Conditions
+
+The CPU exits STOP mode under these conditions:
+
+- **Input Device Activity**: Any button press or joypad input
+- **Serial Communication**: Completion of serial transfers
+- **System Reset**: Hardware or software reset
+- **External Hardware Events**: Virtual hardware can implement additional wake-up sources
+
+#### What Cannot Wake STOP:
+
+- Timer interrupts (system clocks are stopped)
+- Regular hardware interrupts (unless specifically designed as wake-up sources)
+- Software-generated interrupts
+
+#### Instruction Format
+
+In the Game Boy CPU's implementation, the `STOP` instruction follows a 2-byte
+format. However, since opcodes in the TM32 are 16-bit, the second byte here is
+implicitly part of the opcode:
+
+- **Opcode**: `0x0100` (16-bit opcode).
+- **Length**: 2 bytes
+- **Cycles**: 2 cycles to execute, then CPU enters standby mode
+
+#### Power Management Considerations
+
+- **Ultra-Low Power**: STOP mode provides the lowest power consumption state
+  available on the TM32.
+- **Hardware Coordination**: Virtual hardware should implement their own
+  power-saving behaviors when the CPU enters STOP mode.
+- **Wake-up Latency**: There may be a brief delay when exiting STOP mode as
+  the CPU and hardware components resume normal operation.
+
+#### Programming Best Practices
+
+- Use `STOP` when the application hasn't detected user input for a period
+- Ensure proper wake-up conditions are configured before entering STOP mode
+- Consider the trade-off between power savings and wake-up responsiveness
+- Test STOP behavior thoroughly in the target virtual hardware environment
+
+#### Comparison with HALT
+
+| Feature | HALT | STOP |
+|---------|------|------|
+| **Power Savings** | Moderate | Ultra-low (maximum) |
+| **Wake-up Conditions** | Any interrupt (even disabled) | External wake-up events only |
+| **Implementation Complexity** | Simple | Requires hardware coordination |
+| **Use Case** | Brief waits, interrupt-driven tasks | Long idle periods, battery conservation |
+| **Recovery Time** | Immediate | May have brief latency |
+
+### 3.6 The Stack and the Stack Pointer Register
 
 The stack is a region of memory used for temporary storage of data, such as
 register data and subroutine return addresses. The Stack Pointer register (`SP`) 
@@ -270,6 +341,29 @@ events.
     interrupt vectors with higher indices. As `IME` is cleared as part of
     acknowledging the interrupt, nested interrupts are disabled until `RETI` or
     `EI` are called.
+
+### 4.1 Interrupt Vector 0 - Exception Handler
+
+If the TM32 CPU sets the `EC` register due to an exception being thrown (such
+as an invalid instruction or an invalid memory access), interrupt vector 0 is
+automatically called to handle the exception. This occurs regardless of the 
+current state of the CPU's interrupt flags (`IME`, `IE` and `IF`) - equivalent 
+to using the `INT 0` instruction.
+
+#### Exception Handling Process
+
+When an exception occurs:
+
+1. **Error Code**: The `EC` register is set to the appropriate exception code
+2. **Interrupt Call**: Interrupt vector 0 is immediately invoked
+3. **Context Preservation**: The program counter is pushed onto the stack
+4. **Handler Execution**: Control transfers to the exception handler at `0x00001000`
+5. **Recovery**: The exception handler can examine the `EC` register and take appropriate action
+
+Although interrupt vector 0 can be called like any other interrupt vector and
+used for any purpose as needed by software or other hardware, it is **strongly**
+recommended that this vector be reserved for handling exceptions to ensure
+proper error handling and system stability.
 
 ## 5. Instructions
 
@@ -472,8 +566,8 @@ set. Keep the following in mind as you read the tables below:
 | Opcode    | Mnemonic          | Length/Cycles | Flags     | Description                                                   |
 |-----------|-------------------|---------------|-----------|---------------------------------------------------------------|
 | `0x0000`  | `NOP`             |               |           | Does nothing.                                                 |
-| `0x0100`  | `STOP`            |               |           | Sets the Stop flag in the Flags register.                     |
-| `0x0200`  | `HALT`            |               |           | Sets the Halt flag in the Flags register.                     |
+| `0x0100`  | `STOP`            | 2/2           |           | Enters ultra-low power standby mode. Sets the Stop flag.      |
+| `0x0200`  | `HALT`            |               |           | Enters low power mode. Sets the Halt flag.                    |
 | `0x03XX`  | `SEC XX`          |               |           | Sets the `EC` register to byte `XX`.                          |
 | `0x0400`  | `CEC`             |               |           | Sets the `EC` register to zero.                               |
 | `0x0500`  | `DI`              |               |           | Clears `IME`, disabling interrupts.                           |
@@ -603,6 +697,20 @@ set. Keep the following in mind as you read the tables below:
     decimal adjusted, and the Carry flag is not already set.
 - `CCF` sets the Carry flag if clear, and clears it if set.
 - `FLG` sets the Zero flag if bit (16 + `X`) of the Flags register is clear.
+
+###### STOP Instruction Behavior
+
+The `STOP` instruction (`0x0100`) implements Game Boy-inspired ultra-low power standby mode:
+
+- **Power Mode**: Enters the lowest power consumption state available
+- **CPU State**: All registers and memory contents are preserved during STOP mode
+- **Exit Conditions**: Can only be exited by external wake-up events or system reset
+- **Hardware Effects**: Virtual hardware components should implement their own low-power behaviors
+- **Wake-up Latency**: Brief delay may occur when resuming from STOP mode
+- **Use Cases**: Ideal for idle periods, battery conservation, or when awaiting user input
+- **Exception Handling**: Unlike previous behavior, exceptions no longer set the Stop flag; they invoke interrupt vector 0 instead
+
+Unlike `HALT` which can be woken by any interrupt, `STOP` requires specific external wake-up conditions to be configured by the virtual hardware implementation.
 
 ##### Data Transfer Instructions
 

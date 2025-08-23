@@ -162,8 +162,33 @@ bool TM32CPU_RaiseException (
     uint8_t             errorCode
 )
 {
+    // Set the error code
     processor->ec = errorCode;
-    processor->flags |= TM32CPU_FT_T;
+    
+    // If this is not the OK status, call interrupt vector 0 to handle the exception
+    if (errorCode != TM32CPU_EC_OK)
+    {
+        // Push the current program counter onto the stack
+        if (TM32CPU_Push(processor, processor->pc) == false)
+        {
+            // If an additional error occurs during the exception-handling
+            // process, this is a "double fault" situtation. In this case,
+            // a program exit is needed.
+            char message[256] = { 0 };
+            TM32CPU_GetErrorString(processor, message, sizeof(message) - 1);
+
+            TM32CPU_LogError("DOUBLE FAULT: '%s'!\n", message);
+            exit(EXIT_FAILURE);
+        }
+        
+        // Move program counter to interrupt vector 0 (exception handler)
+        processor->pc = TM32CPU_INTERRUPT_START;
+        
+        // Clear the Halt flag and disable IME (like normal interrupt handling)
+        TM32CPU_ClearFlags(processor, TM32CPU_FT_L);
+        processor->ime = false;
+    }
+    
     return (processor->ec == TM32CPU_EC_OK);
 }
 
@@ -1213,7 +1238,8 @@ bool TM32CPU_Execute_STOP (
 {
     // 0x0100 STOP
     //
-    // Stops the processor until it is reset.
+    // Enters ultra-low power standby mode. Can only be woken by external 
+    // wake-up events or reset. This is Game Boy-inspired behavior.
     TM32CPU_SetFlags(processor, TM32CPU_FT_T);
     return true;
 }
@@ -1225,7 +1251,7 @@ bool TM32CPU_Execute_HALT (
     // 0x0200 HALT
     //
     // Halts the processor until an interrupt occurs.
-    TM32CPU_SetFlags(processor, TM32CPU_FT_H);
+    TM32CPU_SetFlags(processor, TM32CPU_FT_L);
     return true;
 }
 
@@ -3094,10 +3120,17 @@ bool TM32CPU_StepProcessor (
 {
     TM32CPU_ReturnValueIfNull(processor, false);
 
-    // Do not step if the processor is stopped.
-    if (TM32CPU_CheckFlags(processor, TM32CPU_FT_T) == true)
+    // Do not step if the processor is in a STOP state.
+    if (TM32CPU_CheckFlags(processor, TM32CPU_FT_S) == true)
     {
-        return false;
+        // If the `EC` register indicates an exception, then return false.
+        if (processor->ec != TM32CPU_EC_OK)
+        {
+            return false;
+        }
+
+        // Otherwise, consume one cycle and return the result.
+        return TM32CPU_ConsumeCycles(processor, 1);
     }
 
     // The step will work differently based on the processor's halt flag.
@@ -3457,6 +3490,31 @@ bool TM32CPU_StepProcessor (
     return true;
 }
 
+bool TM32CPU_WakeProcessor (
+    TM32CPU_Processor* processor
+)
+{
+    TM32CPU_ReturnValueIfNull(processor, false);
+
+    // Make sure the processor is in a STOP state.
+    if (TM32CPU_CheckFlags(processor, TM32CPU_FT_S) == true)
+    {
+        // The processor can only be woken up from a STOP state if the `EC`
+        // register indicates no exception.
+        if (processor->ec != TM32CPU_EC_OK)
+        {
+            return false;
+        }
+
+        // Clear the STOP flag and consume a few cycles to simulate the wake-up
+        // time.
+        TM32CPU_ClearFlags(processor, TM32CPU_FT_S);
+        return TM32CPU_ConsumeCycles(processor, 4);
+    }
+
+    return true;
+}
+
 bool TM32CPU_ConsumeCycles (
     TM32CPU_Processor*  processor,
     uint32_t            cycles
@@ -3757,6 +3815,22 @@ void TM32CPU_SetErrorCode (
 {
     TM32CPU_ReturnIf(processor == NULL);
     processor->ec = errorCode;
+}
+
+bool TM32CPU_IsHalted (
+    const TM32CPU_Processor* processor
+)
+{
+    TM32CPU_ReturnValueIf(processor == NULL, false);
+    return TM32CPU_CheckFlags(processor, TM32CPU_FT_L);
+}
+
+bool TM32CPU_IsStopped (
+    const TM32CPU_Processor* processor
+)
+{
+    TM32CPU_ReturnValueIf(processor == NULL, false);
+    return TM32CPU_CheckFlags(processor, TM32CPU_FT_S);
 }
 
 bool TM32CPU_GetErrorString (

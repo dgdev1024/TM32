@@ -13,8 +13,8 @@ the [TM32 CPU Specification](tm32cpu.specification.md).
 | Opcode    | Mnemonic          | Length/Cycles | Flags     | Description                                                           |
 |-----------|-------------------|---------------|-----------|-----------------------------------------------------------------------|
 | `0x0000`  | `NOP`             | 2/2           |           | No operation. Does nothing.                                           |
-| `0x0100`  | `STOP`            | 2/2           |           | Sets the Stop flag in the Flags register.                             |
-| `0x0200`  | `HALT`            | 2/2           |           | Sets the Halt flag in the Flags register.                             |
+| `0x0100`  | `STOP`            | 2/2           |           | Enters ultra-low power standby mode. Sets the Stop flag.             |
+| `0x0200`  | `HALT`            | 2/2           |           | Enters low power mode. Sets the Halt flag.                           |
 | `0x03XX`  | `SEC XX`          | 2/2           |           | Sets the `EC` register to byte `XX`.                                  |
 | `0x0400`  | `CEC`             | 2/2           |           | Sets the `EC` register to zero.                                       |
 | `0x0500`  | `DI`              | 2/2           |           | Clears `IME`, disabling interrupts.                                   |
