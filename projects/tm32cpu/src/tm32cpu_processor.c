@@ -3509,7 +3509,7 @@ bool TM32CPU_WakeProcessor (
         // Clear the STOP flag and consume a few cycles to simulate the wake-up
         // time.
         TM32CPU_ClearFlags(processor, TM32CPU_FT_S);
-        return TM32CPU_ConsumeCycles(processor, 4);
+        return TM32CPU_ConsumeCycles(processor, 2);
     }
 
     return true;

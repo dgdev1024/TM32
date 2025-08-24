@@ -437,11 +437,27 @@ instructions use this behavior:
 
 #### Execution Conditions
 
-For the control-transfer instructions (`JMP`, `JPB`, `JPS`, `CALL` and `RET`),
+For the control-transfer instructions (`JMP`, `JPB`, `CALL` and `RET`),
 the `X` parameter is used to indicate an **execution condition**, which needs to
 be met in order for the instruction to actually use and affect the program
 counter. The execution conditions check to see if a certain bit in the Flags
 register is either set or clear.
+
+Any call to these instructions **must** include an execution condition, even if the
+condition is "no condition" (i.e. always execute the instruction), in which case
+the execution condition `NC` ("No Condition") is used. For instance, this code...
+
+```assembly
+JMP 0x12345678
+RET
+```
+
+...would be illegal, but this code would be legal:
+
+```assembly
+JMP NC, 0x12345678
+RET NC
+```
 
 The table below illustrates which execution conditions are mapped to the `X`
 parameter's values, which bit in the Flags register the conditions check, and
