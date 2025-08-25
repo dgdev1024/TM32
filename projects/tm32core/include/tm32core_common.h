@@ -50,6 +50,28 @@
     TM32CORE_VERSION_PATCH \
 )
 
+// Memory Map Constants
+#define TM32CORE_METADATA_START             0x00000000
+#define TM32CORE_METADATA_END               0x00000FFF
+#define TM32CORE_INTERRUPT_START            0x00001000
+#define TM32CORE_INTERRUPT_END              0x00002FFF
+#define TM32CORE_PROGRAM_START              0x00003000
+#define TM32CORE_PROGRAM_END                0x7FFFFFFF
+#define TM32CORE_WORK_RAM_START             0x80000000
+#define TM32CORE_WORK_RAM_END               0x9FFFFFFF
+#define TM32CORE_SAVE_RAM_START             0xA0000000
+#define TM32CORE_SAVE_RAM_END               0xBFFFFFFF
+#define TM32CORE_VIDEO_RAM_START            0xC0008000
+#define TM32CORE_VIDEO_RAM_END              0xC0009FFF
+#define TM32CORE_OAM_START                  0xC000FE00
+#define TM32CORE_OAM_END                    0xC000FE9F
+#define TM32CORE_STACK_START                0xFFFE0000
+#define TM32CORE_STACK_END                  0xFFFEFFFF
+#define TM32CORE_QUICK_RAM_START            0xFFFF0000
+#define TM32CORE_QUICK_RAM_END              0xFFFFFEFF
+#define TM32CORE_PORT_START                 0xFFFFFF00
+#define TM32CORE_PORT_END                   0xFFFFFFFF
+
 /* Function Macros ************************************************************/
 
 // Logging Macros

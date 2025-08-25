@@ -14,6 +14,7 @@
 
 #include <tm32cpu_processor.h>
 #include <tm32core_program.h>
+#include <tm32core_ram.h>
 #include <tm32core_timer.h>
 #include <tm32core_rtc.h>
 #include <tm32core_serial.h>
@@ -84,6 +85,18 @@ TM32CORE_API TM32CPU_Processor* TM32Core_GetBusCPU (
  *          `NULL` if the bus is `NULL` or if no program is connected.
  */
 TM32CORE_API TM32Core_Program* TM32Core_GetBusProgramInterface (
+    TM32Core_Bus*   bus
+);
+
+/**
+ * @brief   Retrieves the TM32 RAM connected to the given TM32 Core Bus interface.
+ * 
+ * @param   bus     A pointer to the TM32 Core Bus interface.
+ * 
+ * @return  A pointer to the TM32 RAM connected to the bus;
+ *          `NULL` if the bus is `NULL` or if no RAM is connected.
+ */
+TM32CORE_API TM32Core_RAM* TM32Core_GetBusRAM (
     TM32Core_Bus*   bus
 );
 
