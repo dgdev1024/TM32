@@ -3711,6 +3711,32 @@ void TM32CPU_ChangeFlags (
     }
 }
 
+bool TM32CPU_RequestInterrupt (
+    TM32CPU_Processor*  processor,
+    uint8_t             interruptNumber
+)
+{
+    TM32CPU_ReturnValueIf(processor == NULL, false);
+    TM32CPU_ReturnValueIf(interruptNumber >= 32, false);
+
+    // Set the corresponding bit in the interrupt flags register.
+    processor->intflags |= (1 << interruptNumber);
+    return true;
+}
+
+bool TM32CPU_CancelInterrupt (
+    TM32CPU_Processor*  processor,
+    uint8_t             interruptNumber
+)
+{
+    TM32CPU_ReturnValueIf(processor == NULL, false);
+    TM32CPU_ReturnValueIf(interruptNumber >= 32, false);
+
+    // Clear the corresponding bit in the interrupt flags register.
+    processor->intflags &= ~(1 << interruptNumber);
+    return true;
+}
+
 uint32_t TM32CPU_GetProgramCounter (
     const TM32CPU_Processor* processor
 )
@@ -3784,12 +3810,13 @@ uint32_t TM32CPU_GetInterruptFlags (
     return processor->intflags;
 }
 
-bool TM32CPU_GetInterruptMasterEnable (
-    const TM32CPU_Processor* processor
+void TM32CPU_SetInterruptFlags (
+    TM32CPU_Processor*  processor,
+    uint32_t            interruptFlags
 )
 {
-    TM32CPU_ReturnValueIf(processor == NULL, false);
-    return processor->ime;
+    TM32CPU_ReturnIf(processor == NULL);
+    processor->intflags = interruptFlags;
 }
 
 uint32_t TM32CPU_GetInterruptEnable (
@@ -3798,6 +3825,23 @@ uint32_t TM32CPU_GetInterruptEnable (
 {
     TM32CPU_ReturnValueIf(processor == NULL, 0);
     return processor->intenable;
+}
+
+void TM32CPU_SetInterruptEnable (
+    TM32CPU_Processor*  processor,
+    uint32_t            interruptEnable
+)
+{
+    TM32CPU_ReturnIf(processor == NULL);
+    processor->intenable = interruptEnable;
+}
+
+bool TM32CPU_GetInterruptMasterEnable (
+    const TM32CPU_Processor* processor
+)
+{
+    TM32CPU_ReturnValueIf(processor == NULL, false);
+    return processor->ime;
 }
 
 uint8_t TM32CPU_GetErrorCode (

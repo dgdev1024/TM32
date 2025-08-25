@@ -97,9 +97,45 @@ static bool TM32Core_BusRead (uint32_t address, uint8_t* data, void* userData)
     // I/O Ports
     switch (address)
     {
-        // case 0xFFFFFF??:
+        case TM32CORE_PORT_DIV:
+            *data = TM32Core_ReadDIV(bus->timer);
+            break;
+        case TM32CORE_PORT_TIMA:
+            *data = TM32Core_ReadTIMA(bus->timer);
+            break;
+        case TM32CORE_PORT_TMA:
+            *data = TM32Core_ReadTMA(bus->timer);
+            break;
+        case TM32CORE_PORT_TAC:
+            *data = TM32Core_ReadTAC(bus->timer);
+            break;
+        // case TM32CORE_PORT_??:
         //     *data = TM32Core_ReadSomePort(bus->someComponent);
         //     break;
+        case TM32CORE_PORT_IF3:
+            *data = (TM32CPU_GetInterruptFlags(bus->cpu) >> 24) & 0xFF;
+            break;
+        case TM32CORE_PORT_IF2:
+            *data = (TM32CPU_GetInterruptFlags(bus->cpu) >> 16) & 0xFF;
+            break;
+        case TM32CORE_PORT_IF1:
+            *data = (TM32CPU_GetInterruptFlags(bus->cpu) >> 8) & 0xFF;
+            break;
+        case TM32CORE_PORT_IF0:
+            *data = TM32CPU_GetInterruptFlags(bus->cpu) & 0xFF;
+            break;
+        case TM32CORE_PORT_IE3:
+            *data = (TM32CPU_GetInterruptEnable(bus->cpu) >> 24) & 0xFF;
+            break;
+        case TM32CORE_PORT_IE2:
+            *data = (TM32CPU_GetInterruptEnable(bus->cpu) >> 16) & 0xFF;
+            break;
+        case TM32CORE_PORT_IE1:
+            *data = (TM32CPU_GetInterruptEnable(bus->cpu) >> 8) & 0xFF;
+            break;
+        case TM32CORE_PORT_IE0:
+            *data = TM32CPU_GetInterruptEnable(bus->cpu) & 0xFF;
+            break;
         default:
             TM32Core_LogError("Read from unmapped address 0x%08X", address);
             return false;
@@ -173,9 +209,49 @@ static bool TM32Core_BusWrite (uint32_t address, uint8_t data, void* userData)
     // I/O Ports
     switch (address)
     {
-        // case 0xFFFFFF??:
-        //     TM32Core_WriteSomePort(bus->someComponent, data);
+        case TM32CORE_PORT_DIV:
+            return TM32Core_WriteDIV(bus->timer, data);
+        case TM32CORE_PORT_TIMA:
+            return TM32Core_WriteTIMA(bus->timer, data);
+        case TM32CORE_PORT_TMA:
+            return TM32Core_WriteTMA(bus->timer, data);
+        case TM32CORE_PORT_TAC:
+            return TM32Core_WriteTAC(bus->timer, data);
+        // case TM32CORE_PORT_??:
+        //     return TM32Core_WriteSomePort(bus->someComponent, data);
         //     break;
+        case TM32CORE_PORT_IF3:
+            TM32CPU_SetInterruptFlags(bus->cpu,
+                (TM32CPU_GetInterruptFlags(bus->cpu) & 0x00FFFFFF) | (data << 24));
+            break;
+        case TM32CORE_PORT_IF2:
+            TM32CPU_SetInterruptFlags(bus->cpu,
+                (TM32CPU_GetInterruptFlags(bus->cpu) & 0xFF00FFFF) | (data << 16));
+            break;
+        case TM32CORE_PORT_IF1:
+            TM32CPU_SetInterruptFlags(bus->cpu,
+                (TM32CPU_GetInterruptFlags(bus->cpu) & 0xFFFF00FF) | (data << 8));
+            break;
+        case TM32CORE_PORT_IF0:
+            TM32CPU_SetInterruptFlags(bus->cpu,
+                (TM32CPU_GetInterruptFlags(bus->cpu) & 0xFFFFFF00) | data);
+            break;
+        case TM32CORE_PORT_IE3:
+            TM32CPU_SetInterruptEnable(bus->cpu,
+                (TM32CPU_GetInterruptEnable(bus->cpu) & 0x00FFFFFF) | (data << 24));
+            break;
+        case TM32CORE_PORT_IE2:
+            TM32CPU_SetInterruptEnable(bus->cpu,
+                (TM32CPU_GetInterruptEnable(bus->cpu) & 0xFF00FFFF) | (data << 16));
+            break;
+        case TM32CORE_PORT_IE1:
+            TM32CPU_SetInterruptEnable(bus->cpu,
+                (TM32CPU_GetInterruptEnable(bus->cpu) & 0xFFFF00FF) | (data << 8));
+            break;
+        case TM32CORE_PORT_IE0:
+            TM32CPU_SetInterruptEnable(bus->cpu,
+                (TM32CPU_GetInterruptEnable(bus->cpu) & 0xFFFFFF00) | data);
+            break;
         default:
             TM32Core_LogError("Write to unmapped address 0x%08X", address);
             return false;

@@ -424,6 +424,43 @@ TM32CPU_API void TM32CPU_ChangeFlags (
 );
 
 /**
+ * @brief   Requests an interrupt on the TM32CPU Processor.
+ * 
+ * This function sets the corresponding bit in the interrupt flags register
+ * (`INTFLAGS`) to request an interrupt. The processor will handle the
+ * interrupt during its next instruction cycle if interrupts are enabled and
+ * the interrupt is not masked.
+ * 
+ * @param   processor       Points to the TM32CPU processor instance.
+ * @param   interruptNumber The number of the interrupt to request (0-31).
+ * 
+ * @return  `true` if the interrupt was requested successfully;
+ *          `false` if the processor is NULL or the interrupt number is invalid.
+ */
+TM32CPU_API bool TM32CPU_RequestInterrupt (
+    TM32CPU_Processor*  processor,
+    uint8_t             interruptNumber
+);
+
+/**
+ * @brief   Cancels a previously requested interrupt on the TM32CPU Processor.
+ * 
+ * This function clears the corresponding bit in the interrupt flags register
+ * (`INTFLAGS`) to cancel a previously requested interrupt. If the interrupt
+ * was not previously requested, this function does nothing.
+ * 
+ * @param   processor       Points to the TM32CPU processor instance.
+ * @param   interruptNumber The number of the interrupt to cancel (0-31).
+ * 
+ * @return  `true` if the interrupt was canceled successfully;
+ *          `false` if the processor is NULL or the interrupt number is invalid.
+ */
+TM32CPU_API bool TM32CPU_CancelInterrupt (
+    TM32CPU_Processor*  processor,
+    uint8_t             interruptNumber
+);
+
+/**
  * @brief   Retrieves the current state of the TM32CPU Processor's program
  *          counter register (`PC`).
  * 
@@ -518,6 +555,25 @@ TM32CPU_API uint32_t TM32CPU_GetInterruptEnable (
 );
 
 /**
+ * @brief   Sets the TM32CPU Processor's interrupt enable register
+ *          (`INTENABLE`) to the specified value.
+ * 
+ * This function allows external code to enable or disable specific interrupts
+ * by setting or clearing bits in the interrupt enable register. Each bit in
+ * this register corresponds to a specific interrupt; if a bit is set, the
+ * corresponding interrupt is enabled, and if it is cleared, the interrupt is
+ * disabled.
+ * 
+ * @param   processor   Points to the TM32CPU processor instance.
+ * @param   intEnable   The new value for the interrupt enable register
+ *                      (`INTENABLE`).
+ */
+TM32CPU_API void TM32CPU_SetInterruptEnable (
+    TM32CPU_Processor*  processor,
+    uint32_t            intEnable
+);
+
+/**
  * @brief   Retrieves the current state of the TM32CPU Processor's interrupt
  *          flags register (`INTFLAGS`).
  * 
@@ -527,6 +583,25 @@ TM32CPU_API uint32_t TM32CPU_GetInterruptEnable (
  */
 TM32CPU_API uint32_t TM32CPU_GetInterruptFlags (
     const TM32CPU_Processor* processor
+);
+
+/**
+ * @brief   Sets the TM32CPU Processor's interrupt flags register
+ *          (`INTFLAGS`) to the specified value.
+ * 
+ * This function allows external code to set or clear specific interrupt flags
+ * by setting or clearing bits in the interrupt flags register. Each bit in
+ * this register corresponds to a specific interrupt; if a bit is set, the
+ * corresponding interrupt is requested, and if it is cleared, the interrupt
+ * request is canceled.
+ * 
+ * @param   processor   Points to the TM32CPU processor instance.
+ * @param   intFlags    The new value for the interrupt flags register
+ *                      (`INTFLAGS`).
+ */
+TM32CPU_API void TM32CPU_SetInterruptFlags (
+    TM32CPU_Processor*  processor,
+    uint32_t            intFlags
 );
 
 /**
