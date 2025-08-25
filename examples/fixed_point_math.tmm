@@ -1,0 +1,21 @@
+; Example 8.11: Fixed-Point Mathematics
+; Demonstrates fixed-point arithmetic for fractional calculations
+
+.const FIXED_SCALE = 256      ; 8.8 fixed-point
+
+.text
+fixed_point_demo:
+    ; Convert integer to fixed-point
+    ld   a, 5                 ; Integer 5
+    ld   b, FIXED_SCALE       ; Scale factor
+    ; Multiply A by B (simplified)
+    
+    ; Fixed-point addition
+    ld   c, (3 * FIXED_SCALE) ; 3.0 in fixed-point
+    add  a, c                 ; Add fixed-point values (A = accumulator)
+    
+    ; Convert back to integer
+    ld   b, FIXED_SCALE
+    ; Divide A by B (simplified)
+    
+    halt                      ; End program

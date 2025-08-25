@@ -1,0 +1,51 @@
+; Example 8.10: Interrupt Service Routines
+; Demonstrates interrupt handling and context preservation
+
+; This example assumes that at least the low bytes of the TM32's interrupt flags
+; and enable registers are memory-mapped by the hardware platform.
+.const hIE0 = 0xFB
+.const hIF0 = 0xFF
+
+; Interrupt vector 1 - Timer interrupt
+.int 1
+timer_isr:
+    ; Save context (only necessary registers)
+    push a
+    push b
+    
+    ; Handle timer interrupt
+    ldp  al, [0x10]           ; Read timer status
+    and  al, 0x01             ; Check timer flag (AL = accumulator)
+    jmp  zs, timer_done       ; Skip if not timer
+    
+    ; Timer processing
+    ld   b, [timer_counter]   ; Load counter
+    inc  b                    ; Increment
+    st   [timer_counter], b   ; Store back
+    
+    stp  [0x10], al           ; Clear timer flag
+    
+timer_done:
+    ; Restore context
+    pop  b
+    pop  a
+    reti                      ; Return and enable interrupts
+
+.data
+timer_counter: .dd 0
+
+.text
+main_with_interrupts:
+    ld al, 0b10
+    stp [hIE0], al            ; Enable timer interrupt
+    ld al, 0
+    ei                        ; Enable interrupts
+    
+main_loop:
+    ; Main program loop
+    nop                       ; Do work
+    jmp  nc, main_loop        ; Continue forever
+
+; Note: The interrupt vectors used, and how they are requested, depend upon the specific
+; hardware platform and are not defined by the TM32 architecture itself. For this example,
+; a hardware platform that triggers interrupt vector 1 for a timer event is assumed.

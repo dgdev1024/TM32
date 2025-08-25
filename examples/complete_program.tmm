@@ -1,0 +1,110 @@
+; Example 8.13: Complete Program Example
+; Comprehensive program demonstrating multiple TM32 assembly features
+
+.const BUFFER_SIZE = 256
+.const MAX_COUNT = 10
+
+.text
+main:
+    ; Initialize system
+    call nc, init_system
+    
+    ; Main program loop
+    ld   b, 0                 ; Loop counter
+
+main_loop:
+    cmp  b, MAX_COUNT         ; Check loop limit
+    jmp  cs, program_end      ; Exit if reached limit
+    
+    ; Process data
+    call nc, process_data
+    
+    ; Update counter
+    inc  b
+    
+    ; Continue loop
+    jmp  nc, main_loop
+
+program_end:
+    ; Cleanup and exit
+    call nc, cleanup_system
+    halt
+
+; System initialization routine
+init_system:
+    ; Clear buffer
+    ld   a, data_buffer       ; Buffer address
+    ld   b, BUFFER_SIZE       ; Buffer size
+    ld   c, 0                 ; Clear value
+
+clear_loop:
+    st   [a], c               ; Clear byte
+    inc  a                    ; Next address
+    dec  b                    ; Decrement counter
+    jmp  cc, clear_loop       ; Continue if not zero
+    
+    ; Initialize variables
+    ld   a, 0
+    st   [counter], a
+    st   [status], a
+    
+    ret  nc
+
+; Data processing routine
+process_data:
+    ; Load current counter
+    ld   a, [counter]
+    
+    ; Perform calculation
+    add  a, 1                 ; Increment (A = accumulator)
+    and  a, 0xFF              ; Mask to byte (A = accumulator)
+    
+    ; Store result
+    st   [result], a
+    
+    ; Update counter
+    ld   b, [counter]
+    inc  b
+    st   [counter], b
+    
+    ; Set status flag
+    ld   a, 1
+    st   [status], a
+    
+    ret  nc
+
+; System cleanup routine
+cleanup_system:
+    ; Clear all variables
+    ld   a, 0
+    st   [counter], a
+    st   [status], a
+    st   [result], a
+    
+    ret  nc
+
+; Interrupt service routine
+.org 0x1000
+interrupt_handler:
+    ; Save registers
+    push a
+    push b
+    push c
+    
+    ; Handle interrupt
+    ld   a, [status]
+    xor  a, 1                 ; Toggle status (A = accumulator)
+    st   [status], a
+    
+    ; Restore registers
+    pop  c
+    pop  b
+    pop  a
+    
+    reti
+
+.data
+data_buffer:    .reserve BUFFER_SIZE
+counter:        .byte 0
+status:         .byte 0
+result:         .byte 0

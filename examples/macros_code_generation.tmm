@@ -1,0 +1,193 @@
+; Example 8.8: Macros and Code Generation
+; Demonstrates comprehensive macro system with parameters, mangling, and special tokens
+
+; Define useful macros demonstrating basic parameter substitution
+.macro LoadWord
+    ld @1, ((high(@2) << 8) | low(@2))
+.endmacro
+
+.macro SaveRegisters
+    push a                    ; Save all registers
+    push b
+    push c
+    push d
+.endmacro
+
+.macro RestoreRegisters
+    pop  d                    ; Restore in reverse order
+    pop  c
+    pop  b
+    pop  a
+.endmacro
+
+; Macro demonstrating identifier mangling with parameters
+.macro DefineBlock
+    .block_@1:
+        .ds @2
+    .block_@1_end:
+.endmacro
+
+; Advanced macro demonstrating special parameter tokens
+.macro DebugPrint
+    ; @0 expands to macro name: "DebugPrint"
+    ; @# or @NARG expands to number of arguments
+    ; @* expands to all arguments separated by commas
+    ; @- expands to all arguments except the first
+    ; @@ expands to a literal @ character
+    ; @? creates unique identifier suffix for this invocation
+    
+.if DEBUG_MODE
+    ; Create unique debug counter for this invocation
+    .let debug_counter_@? = debug_counter_@? + 1
+    
+    ; Use macro name in debug message
+    .asciz "[@0] Call #", debug_counter_@?, " with @# args: @*"
+    
+    debug_print_@?:
+        push a
+        push b
+        
+        ; Process each argument (demonstrates @- token)
+        .if @# > 1
+            ; Forward all arguments except the first to another macro
+            ProcessArgs @-
+        .endif
+            
+            ; Use first argument
+            ld   a, @1
+            ; ... debug output code ...
+            
+            pop  b
+            pop  a
+        .endif
+.endmacro
+
+; Macro demonstrating @? for local variables and labels
+.macro LocalLoop
+    ; Create unique local variables for this macro invocation
+    .let loop_counter_@? = 0
+    .let loop_limit_@? = @1
+    
+    local_loop_start_@?:
+        .let loop_counter_@? = loop_counter_@? + 1
+        ld   a, loop_counter_@?
+        cmp  a, loop_limit_@?     ; Compare with limit (A = accumulator)
+        jmp  cs, local_loop_end_@?
+        
+        ; Execute loop body (second parameter)
+        @2
+        
+        jmp  nc, local_loop_start_@?
+        
+    local_loop_end_@?:
+        ; Unique label ensures no conflicts between invocations
+.endmacro
+
+; Macro showing variadic parameter handling with .shift
+.macro DefineArray
+    ; @1 = array name, @2 = size, @3... = initial values
+    @1:
+    .if @# > 2
+        ; We have initial values - use .shift to access them
+        .shift 2              ; Skip name and size parameters
+        
+        ; Now @1 is first value, @2 is second value, etc.
+        .for i = 1 to (@# - 2)
+            .db @@i           ; Use @@ to get literal @ for @@i
+        .endfor
+        
+        ; Fill remaining space if needed
+        .if @2 > (@# - 2)
+            .ds (@2 - (@# - 2)), 0
+        .endif
+    .else
+        ; No initial values - just reserve space
+        .ds @2
+    .endif
+.endmacro
+
+; Macro demonstrating complex identifier mangling
+.macro CreateModule
+    ; Creates a complete module with unique namespace
+    ; @1 = module name, @2 = data size, @3 = function count
+    
+    ; Module data section with mangled names
+    .module_@1_data:
+        .ds @2
+    .module_@1_data_end:
+    
+    ; Module function table
+    .module_@1_functions:
+.for func_idx = 0 to (@3 - 1)
+        .dd module_@1_func_func_idx
+.endfor
+    
+    ; Module initialization function
+    module_@1_init:
+        push a
+        ld   a, @1_@?_init_marker    ; Unique init marker
+        st   [.module_@1_data], a
+        pop  a
+        ret  nc
+    
+    ; Define init marker constant with unique value
+    .const @1_@?_init_marker = 0x@1@?    ; Combines name and unique suffix
+.endmacro
+
+.bss
+; Initialize debug counter for DebugPrint macro
+.let debug_counter_DefineBlock_1085 = 0  ; Unique per invocation
+
+; This macro demonstrates how identifiers can be mangled
+; The invocation: DefineBlock data, 128
+; Expands to:
+; .block_data:
+;     .ds 128
+; .block_data_end:
+DefineBlock data, 128
+
+; Create another block to show unique expansion
+DefineBlock temp, 64
+
+.data
+; Demonstrate DefineArray macro with various parameter counts
+DefineArray simple_array, 8           ; Just name and size
+DefineArray init_array, 5, 10, 20, 30 ; With initial values
+DefineArray byte_values, 4, 0xFF, 0xAA, 0x55, 0x00
+
+.text
+macro_demo:
+    SaveRegisters             ; Use basic macro
+    
+    LoadWord bw, 0x1234       ; Load word using macro
+    
+    ; Demonstrate DebugPrint with different argument counts
+    DebugPrint "Message 1"
+    DebugPrint "Message 2", a, b
+    DebugPrint "Complex", 0x1234, [buffer], "end"
+    
+    ; Demonstrate LocalLoop macro (creates unique labels/variables)
+    LocalLoop 5, "nop"        ; Loop 5 times executing NOP
+    LocalLoop 3, "inc d"      ; Loop 3 times incrementing D
+    
+    ; Create modules with unique namespaces
+    CreateModule graphics, 256, 4
+    CreateModule sound, 128, 2
+    
+    ; Do some work...
+    ld   a, 42
+    
+    RestoreRegisters          ; Restore using macro
+    halt                      ; End program
+
+; Helper macro for DebugPrint demonstration
+.macro ProcessArgs
+    .if @# > 0
+        ; Process each remaining argument
+        ld   b, @1
+        ; ... process argument ...
+        .if @# > 1
+            ProcessArgs @-            ; Recursive call with remaining args
+        .endif
+    .endif
+.endmacro

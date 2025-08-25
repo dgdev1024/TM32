@@ -3588,11 +3588,12 @@ tm32asm -o audio.tmo audio.tmm
 # Link object files
 tm32link -o program.tm32 main.tmo graphics.tmo audio.tmo
 
-# Validate program
-tm32validate program.tm32
-
 echo "Build complete: program.tm32"
 ```
+
+For more information on the TMM assembler and linker, and their command-line
+options, please refer to the [TM32 Assembler Tool Specification](docs/tm32assembler.specification.md)
+and the [TM32 Linker Tool Specification](docs/tm32linker.specification.md).
 
 #### 5.5.2 Debugging Strategies
 
