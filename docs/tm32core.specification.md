@@ -17,7 +17,6 @@ original CPU, the Sharp LR35902.
     - [Timer Component](#timer-component)
     - [Real-Time Clock Component](#real-time-clock-component)
     - [Serial Transfer Component](#serial-transfer-component)
-    - [Network Transfer Component](#network-transfer-component)
     - [Joypad Component](#joypad-component)
     - [PPU Component](#ppu-component)
     - [APU Component](#apu-component)

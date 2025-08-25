@@ -167,23 +167,6 @@ workspace "TM32"
             "tm32cpu"
         }
 
-    -- Project: `tm32validate` - TM32 CPU Program Validator Tool
-    project "tm32validate"
-        kind        "ConsoleApp"
-        location    "./build/tm32validate"
-        targetdir   "./build/%{outputdir}/bin"
-        objdir      "./build/%{outputdir}/obj/tm32validate"
-        files       { "./projects/tm32validate/include/**.h", "./projects/tm32validate/src/**.c" }
-        includedirs { 
-            "./projects", 
-            "./projects/tm32cpu/include",
-            "./projects/tm32validate/include",
-            table.unpack(external_includes) 
-        }
-        links {
-            "tm32cpu"
-        }
-
     -- Project: `tm32test` - Unit and Integeration Test Suite for `tm32` libraries.
     project "tm32test"
         kind        "ConsoleApp"
