@@ -51,6 +51,7 @@ struct TM32CPU_Processor
     uint8_t     iparam1;            /** @brief Current Instruction Parameter 1 */
     uint8_t     iparam2;            /** @brief Current Instruction Parameter 2 */
     bool        ei;                 /** @brief Enable IME at end of frame? */
+    bool        handlingException;  /** @brief Internal: currently handling an exception */
 
 };
 
@@ -162,23 +163,40 @@ bool TM32CPU_RaiseException (
     uint8_t             errorCode
 )
 {
+    /* If we're already handling an exception, this is a double fault. Bail out
+       immediately to avoid infinite recursion and stack overflow. */
+    if (processor->handlingException)
+    {
+        char message[256] = { 0 };
+          TM32CPU_GetErrorString(processor, message, sizeof(message));
+          TM32CPU_LogError("DOUBLE FAULT (re-entrant): '%s'!\n", message);
+          /* Do not abort the process from a library call. Instead, record the
+              error and return failure so the caller (test harness) can handle
+              it. Clear the handling flag to avoid dead-locking future accesses. */
+          processor->handlingException = false;
+          return false;
+    }
+
     // Set the error code
     processor->ec = errorCode;
     
     // If this is not the OK status, call interrupt vector 0 to handle the exception
     if (errorCode != TM32CPU_EC_OK)
     {
+        /* Mark that we're handling an exception so memory access helpers
+           don't attempt to raise another exception (which would recurse).
+        */
+        processor->handlingException = true;
         // Push the current program counter onto the stack
         if (TM32CPU_Push(processor, processor->pc) == false)
         {
-            // If an additional error occurs during the exception-handling
-            // process, this is a "double fault" situtation. In this case,
-            // a program exit is needed.
+            // If Push fails while we're handling an exception, this is a
+            // double fault; emit diagnostics and exit immediately.
             char message[256] = { 0 };
-            TM32CPU_GetErrorString(processor, message, sizeof(message) - 1);
-
-            TM32CPU_LogError("DOUBLE FAULT: '%s'!\n", message);
-            exit(EXIT_FAILURE);
+            TM32CPU_GetErrorString(processor, message, sizeof(message));
+            TM32CPU_LogError("DOUBLE FAULT (push failed): '%s'!\n", message);
+            processor->handlingException = false;
+            return false;
         }
         
         // Move program counter to interrupt vector 0 (exception handler)
@@ -187,6 +205,9 @@ bool TM32CPU_RaiseException (
         // Clear the Halt flag and disable IME (like normal interrupt handling)
         TM32CPU_ClearFlags(processor, TM32CPU_FT_L);
         processor->ime = false;
+          /* Finished handling the mechanics of raising the exception. Clear
+              the flag so future memory accesses behave normally. */
+          processor->handlingException = false;
     }
     
     return (processor->ec == TM32CPU_EC_OK);
@@ -200,6 +221,11 @@ bool TM32CPU_CheckReadable (
     uint32_t            readSize
 )
 {
+    if (processor->handlingException)
+    {
+        // While handling an exception, avoid raising additional exceptions.
+        return false;
+    }
     // Start and end addresses of the read operation...
     uint64_t    startAddress = (uint64_t) address,
                 endAddress   = (uint64_t) address + (uint64_t) readSize - 1;
@@ -225,6 +251,11 @@ bool TM32CPU_CheckWritable (
     uint32_t            writeSize
 )
 {
+    if (processor->handlingException)
+    {
+        // While handling an exception, avoid raising additional exceptions.
+        return false;
+    }
     // Start and end addresses of the write operation...
     uint64_t    startAddress = (uint64_t) address,
                 endAddress   = (uint64_t) address + (uint64_t) writeSize - 1;
@@ -299,6 +330,13 @@ bool TM32CPU_ReadByte (
     uint8_t*            data
 )
 {
+    if (processor->handlingException)
+    {
+        /* While handling an exception, avoid performing bus reads that may
+           attempt to raise further exceptions. Return false to indicate the
+           read failed without invoking the exception machinery. */
+        return false;
+    }
     uint8_t byte0 = 0;
 
     if (processor->busReadCallback(address, &byte0, processor->userData) == false)
@@ -318,6 +356,10 @@ bool TM32CPU_ReadWord (
     uint16_t*           data
 )
 {
+    if (processor->handlingException)
+    {
+        return false;
+    }
     uint8_t byte0 = 0, 
             byte1 = 0;
 
@@ -343,6 +385,10 @@ bool TM32CPU_ReadDoubleWord (
     uint32_t*           data
 )
 {
+    if (processor->handlingException)
+    {
+        return false;
+    }
     uint8_t byte0 = 0, 
             byte1 = 0, 
             byte2 = 0, 
@@ -374,6 +420,10 @@ bool TM32CPU_WriteByte (
     uint8_t             data
 )
 {
+    if (processor->handlingException)
+    {
+        return false;
+    }
     if (processor->busWriteCallback(address, data, processor->userData) == false)
     {
         processor->errorAddress = address;  // Store the address that caused the error
@@ -389,6 +439,10 @@ bool TM32CPU_WriteWord (
     uint16_t            data
 )
 {
+    if (processor->handlingException)
+    {
+        return false;
+    }
     uint8_t byte0 = (data >> 0) & 0xFF;
     uint8_t byte1 = (data >> 8) & 0xFF;
 
@@ -410,6 +464,10 @@ bool TM32CPU_WriteDoubleWord (
     uint32_t            data
 )
 {
+    if (processor->handlingException)
+    {
+        return false;
+    }
     uint8_t byte0 = (data >>  0) & 0xFF;
     uint8_t byte1 = (data >>  8) & 0xFF;
     uint8_t byte2 = (data >> 16) & 0xFF;
@@ -3100,6 +3158,7 @@ bool TM32CPU_InitializeProcessor (
     processor->iparam1 = 0;
     processor->iparam2 = 0;
     processor->ei = false;
+    processor->handlingException = false;
 
     return true;
 }
@@ -3752,12 +3811,9 @@ bool TM32CPU_SetProgramCounter (
 {
     TM32CPU_ReturnValueIf(processor == NULL, false);
     
-    // Ensure that the program counter is within the valid executable memory 
-    // range.
-    if (
-        address < TM32CPU_INTERRUPT_START &&
-        address + 1 > TM32CPU_PROGRAM_END
-    )
+    // Ensure that the program counter is within the valid executable memory
+    // range: from interrupt vector start through program end.
+    if (address < TM32CPU_INTERRUPT_START || address > TM32CPU_PROGRAM_END)
     {
         return false;
     }

@@ -1571,21 +1571,34 @@ modifications to create raster effects and dynamic visual elements.
 The PPU provides several memory-mapped registers accessible through the port
 register space:
 
-| Address | Name   | Access | Description                        |
-|---------|--------|--------|------------------------------------|
-| `0x40`  | `LCDC` | R/W    | LCD Display Control                |
-| `0x41`  | `STAT` | R/W    | LCD Display Status                 |
-| `0x42`  | `SCY`  | R/W    | Background Viewport Y-Scroll       |
-| `0x43`  | `SCX`  | R/W    | Background Viewport X-Scroll       |
-| `0x44`  | `LY`   | R      | Current Scanline                   |
-| `0x45`  | `LYC`  | R/W    | Scanline Compare                   |
-| `0x46`  | `DMA`  | R/W    | OAM DMA Transfer Start             |
-| `0x47`  | `BGP`  | R/W    | Background Palette Data            |
-| `0x48`  | `OBP0` | R/W    | Object Palette 0 Data              |
-| `0x49`  | `OBP1` | R/W    | Object Palette 1 Data              |
-| `0x4A`  | `WY`   | R/W    | Window Y-Position                  |
-| `0x4B`  | `WX`   | R/W    | Window X-Position                  |
-| `0xAD`  | `GRPM` | R/W    | (TM32) Graphics Mode Control       |
+| Address | Name        | Access | Description                                         |
+|---------|-------------|--------|-----------------------------------------------------|
+| `0x40`  | `LCDC`      | R/W    | LCD Display Control                                 |
+| `0x41`  | `STAT`      | R/W    | LCD Display Status                                  |
+| `0x42`  | `SCY`       | R/W    | Background Viewport Y-Scroll                        |
+| `0x43`  | `SCX`       | R/W    | Background Viewport X-Scroll                        |
+| `0x44`  | `LY`        | R      | Current Scanline                                    |
+| `0x45`  | `LYC`       | R/W    | Scanline Compare                                    |
+| `0x46`  | `DMA`       | R/W    | Alias of `ODMA` register (port address `0xA3`)      |
+| `0x47`  | `BGP`       | R/W    | Background Palette Data                             |
+| `0x48`  | `OBP0`      | R/W    | Object Palette 0 Data                               |
+| `0x49`  | `OBP1`      | R/W    | Object Palette 1 Data                               |
+| `0x4A`  | `WY`        | R/W    | Window Y-Position                                   |
+| `0x4B`  | `WX`        | R/W    | Window X-Position                                   |
+| `0xA0`  | `ODMAS3`    | W      | (TM32) OAM DMA Source Address Byte 3                |
+| `0xA1`  | `ODMAS2`    | W      | (TM32) OAM DMA Source Address Byte 2                |
+| `0xA2`  | `ODMAS1`    | W      | (TM32) OAM DMA Source Address Byte 1                |
+| `0xA3`  | `ODMA`      | R/W    | (TM32) OAM DMA Start                                |
+| `0xA4`  | `HDMAS3`    | W      | (TM32) HDMA Source Address Byte 3                   |
+| `0xA5`  | `HDMAS2`    | W      | (TM32) HDMA Source Address Byte 2                   |
+| `0xA6`  | `HDMAS1`    | W      | (TM32) HDMA Source Address Byte 1                   |
+| `0xA7`  | `HDMAS0`    | W      | (TM32) HDMA Source Address Byte 0                   |
+| `0xA8`  | `HDMAD3`    | W      | (TM32) HDMA Destination Address Byte 3              |
+| `0xA9`  | `HDMAD2`    | W      | (TM32) HDMA Destination Address Byte 2              |
+| `0xAA`  | `HDMAD1`    | W      | (TM32) HDMA Destination Address Byte 1              |
+| `0xAB`  | `HDMAD0`    | W      | (TM32) HDMA Destination Address Byte 0              |
+| `0xAC`  | `HDMA`      | R/W    | (TM32) HDMA Start / Control                         |
+| `0xAD`  | `GRPM`      | R/W    | (TM32) Graphics Mode Control                        |
 
 ##### LCDC - LCD Display Control (0x40)
 

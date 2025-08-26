@@ -1,5 +1,5 @@
 /**
- * @file    tm32core_bus.h
+ * @file    tm32core_timer.c
  * @author  Dennis W. Griffin <dgdev1024@gmail.com>
  * @date    2025-08-25
  * 

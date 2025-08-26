@@ -29,7 +29,17 @@ typedef struct TM32Core_Program TM32Core_Program;
  */
 typedef struct
 {
-
+    char        magic[8];           /** @brief Magic string "TM32CORE" */
+    uint32_t    version;            /** @brief Program version (MMmmpppp) */
+    uint32_t    reserved1;          /** @brief Reserved field */
+    uint32_t    romSize;            /** @brief Requested ROM size in bytes */
+    uint32_t    wramSize;           /** @brief Requested WRAM size in bytes */
+    uint32_t    sramSize;           /** @brief Requested SRAM size in bytes */
+    uint32_t    reserved2;          /** @brief Reserved field */
+    char        title[32];          /** @brief Program title (null-terminated) */
+    char        author[32];         /** @brief Program author (null-terminated) */
+    char        description[64];    /** @brief Program description (null-terminated) */
+    uint8_t     reserved3[3968];    /** @brief Reserved space (total header = 4KB) */
 } TM32Core_ProgramHeader;
 
 /* Public Function Prototypes *************************************************/
@@ -67,6 +77,99 @@ TM32CORE_API bool TM32Core_LoadProgram (
  * @param   program     A pointer to the TM32 Core ROM program to destroy.
  */
 TM32CORE_API void TM32Core_DestroyProgram (
+    TM32Core_Program*   program
+);
+
+/* Program Memory Access Functions *******************************************/
+
+/**
+ * @brief   Reads data from the program ROM (metadata, interrupt vectors, or code).
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * @param   address     The address to read from (0x00000000 - 0x7FFFFFFF).
+ * @param   data        Pointer to store the read data.
+ * 
+ * @return  `true` on success; `false` on failure.
+ */
+TM32CORE_API bool TM32Core_ReadProgramROM (
+    TM32Core_Program*   program,
+    uint32_t            address,
+    uint8_t*            data
+);
+
+/**
+ * @brief   Reads data from the program's SRAM (if allocated).
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * @param   address     The SRAM address to read from (0xA0000000 - 0xBFFFFFFF).
+ * @param   data        Pointer to store the read data.
+ * 
+ * @return  `true` on success; `false` on failure.
+ */
+TM32CORE_API bool TM32Core_ReadProgramSRAM (
+    TM32Core_Program*   program,
+    uint32_t            address,
+    uint8_t*            data
+);
+
+/**
+ * @brief   Writes data to the program's SRAM (if allocated).
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * @param   address     The SRAM address to write to (0xA0000000 - 0xBFFFFFFF).
+ * @param   data        The data to write.
+ * 
+ * @return  `true` on success; `false` on failure.
+ */
+TM32CORE_API bool TM32Core_WriteProgramSRAM (
+    TM32Core_Program*   program,
+    uint32_t            address,
+    uint8_t             data
+);
+
+/* Program Information Functions *********************************************/
+
+/**
+ * @brief   Gets the program header from a loaded ROM program.
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * 
+ * @return  A pointer to the program header; `NULL` if not loaded.
+ */
+TM32CORE_API const TM32Core_ProgramHeader* TM32Core_GetProgramHeader (
+    TM32Core_Program*   program
+);
+
+/**
+ * @brief   Gets the actual size of the loaded ROM data.
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * 
+ * @return  The size of the loaded ROM in bytes; 0 if not loaded.
+ */
+TM32CORE_API uint32_t TM32Core_GetProgramROMSize (
+    TM32Core_Program*   program
+);
+
+/**
+ * @brief   Gets the allocated SRAM size for the program.
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * 
+ * @return  The allocated SRAM size in bytes; 0 if not allocated.
+ */
+TM32CORE_API uint32_t TM32Core_GetProgramSRAMSize (
+    TM32Core_Program*   program
+);
+
+/**
+ * @brief   Checks if a program is loaded and valid.
+ * 
+ * @param   program     A pointer to the TM32 Core ROM program.
+ * 
+ * @return  `true` if program is loaded and valid; `false` otherwise.
+ */
+TM32CORE_API bool TM32Core_IsProgramLoaded (
     TM32Core_Program*   program
 );
 

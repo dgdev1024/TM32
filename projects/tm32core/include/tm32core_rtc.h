@@ -64,4 +64,103 @@ TM32CORE_API void TM32Core_DestroyRTC (
     TM32Core_RTC*   rtc
 );
 
+/**
+ * @brief   Clocks the TM32 Core RTC component, advancing time by one cycle.
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component to clock.
+ */
+TM32CORE_API void TM32Core_ClockRTC (
+    TM32Core_RTC*   rtc
+);
+
+/* RTC Register Access Functions **********************************************/
+
+/**
+ * @brief   Reads the RTCS register (RTC Seconds).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCS register value (0-59 seconds).
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCS (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Reads the RTCM register (RTC Minutes).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCM register value (0-59 minutes).
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCM (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Reads the RTCH register (RTC Hours).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCH register value (0-23 hours).
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCH (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Reads the RTCD1 register (RTC Day High Byte).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCD1 register value (day counter bits 15-8).
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCD1 (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Reads the RTCD0 register (RTC Day Low Byte).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCD0 register value (day counter bits 7-0).
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCD0 (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Reads the RTCC register (RTC Control).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * 
+ * @return  The current RTCC register value.
+ */
+TM32CORE_API uint8_t TM32Core_ReadRTCC (
+    TM32Core_RTC*   rtc
+);
+
+/**
+ * @brief   Writes to the RTCC register (RTC Control).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * @param   value   The value to write to the RTCC register.
+ */
+TM32CORE_API void TM32Core_WriteRTCC (
+    TM32Core_RTC*   rtc,
+    uint8_t         value
+);
+
+/**
+ * @brief   Writes to the RTCL register (RTC Latch).
+ * 
+ * @param   rtc     A pointer to the TM32 Core RTC component.
+ * @param   value   The value to write to the RTCL register (value ignored).
+ */
+TM32CORE_API void TM32Core_WriteRTCL (
+    TM32Core_RTC*   rtc,
+    uint8_t         value
+);
+
 #endif // TM32CORE_RTC_H

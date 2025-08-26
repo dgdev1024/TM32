@@ -168,19 +168,21 @@ workspace "TM32"
         }
 
     -- Project: `tm32test` - Unit and Integeration Test Suite for `tm32` libraries.
-    project "tm32test"
-        kind        "ConsoleApp"
-        location    "./build/tm32test"
-        targetdir   "./build/%{outputdir}/bin"
-        objdir      "./build/%{outputdir}/obj/tm32test"
-        files       { "./projects/tm32test/**.h", "./projects/tm32test/**.c" }
-        includedirs { 
-            "./projects", 
-            "./projects/tm32cpu/include",
-            "./projects/tm32core/include",
-            "./projects/tm32test/include",
-            table.unpack(external_includes) 
-        }
-        links {
-            "tm32cpu"
-        }
+    -- project "tm32test"
+    --     kind        "ConsoleApp"
+    --     location    "./build/tm32test"
+    --     targetdir   "./build/%{outputdir}/bin"
+    --     objdir      "./build/%{outputdir}/obj/tm32test"
+    --     files       { "./projects/tm32test/**.h", "./projects/tm32test/**.c" }
+    --     includedirs { 
+    --         "./projects", 
+    --         "./projects/tm32cpu/include",
+    --         "./projects/tm32core/include",
+    --         "./projects/tm32test/include",
+    --         table.unpack(external_includes) 
+    --     }
+    --     links {
+    --         "tm32cpu",
+    --         "tm32core"
+    --     }
+    --     dependson { "tm32core", "tm32cpu" }

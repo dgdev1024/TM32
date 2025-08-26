@@ -172,4 +172,36 @@ TM32CORE_API TM32Core_PPU* TM32Core_GetBusPPU (
     TM32Core_Bus*   bus
 );
 
+/**
+ * @brief   Reads a byte of data from the bus at the specified address.
+ *          This function is used internally for DMA transfers.
+ * 
+ * @param   bus     A pointer to the TM32 Core Bus interface.
+ * @param   address The address to read from.
+ * @param   data    Pointer to store the read data.
+ * 
+ * @return  `true` on success; `false` on failure.
+ */
+TM32CORE_API bool TM32Core_ReadBusData (
+    TM32Core_Bus*   bus,
+    uint32_t        address,
+    uint8_t*        data
+);
+
+/**
+ * @brief   Writes a byte of data to the bus at the specified address.
+ *          This function is used internally for DMA transfers.
+ * 
+ * @param   bus     A pointer to the TM32 Core Bus interface.
+ * @param   address The address to write to.
+ * @param   data    The data to write.
+ * 
+ * @return  `true` on success; `false` on failure.
+ */
+TM32CORE_API bool TM32Core_WriteBusData (
+    TM32Core_Bus*   bus,
+    uint32_t        address,
+    uint8_t         data
+);
+
 #endif // TM32CORE_BUS_H
