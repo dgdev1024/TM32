@@ -23,6 +23,15 @@
 
 /* Constant Macros ************************************************************/
 
+// Maybe Unused (Platform-Specific)
+#if defined(__GNUC__) || defined(__clang__)
+    #define TM32ASM_MAYBE_UNUSED __attribute__((unused))
+#elif defined(_MSC_VER)
+    #define TM32ASM_MAYBE_UNUSED __declspec(unused)
+#else
+    #define TM32ASM_MAYBE_UNUSED
+#endif
+
 // Application Version
 #define TM32ASM_VERSION_MAJOR 0x01
 #define TM32ASM_VERSION_MINOR 0x00
@@ -44,7 +53,7 @@
     fprintf(stderr, "[%s | ERROR] " fmt "\n", __func__, ##__VA_ARGS__)
 #define TM32ASM_LogErrno(fmt, ...) \
     fprintf(stderr, "[%s | ERROR] " fmt ": %s\n", __func__, ##__VA_ARGS__, strerror(errno))
-#if defined(TM_DEBUG)
+#if defined(TM32_DEBUG)
     #define TM32ASM_LogDebug(fmt, ...) \
         fprintf(stdout, "[%s | DEBUG] " fmt "\n", __func__, ##__VA_ARGS__)
 #else
@@ -62,7 +71,7 @@
     do { if (ptr != NULL) { free(ptr); ptr = NULL; } } while(0)
 
 // Early Exit/Return Macros
-#if defined(TM_DEBUG)
+#if defined(TM32_DEBUG)
     #include <assert.h>
     #define TM32ASM_HardAssert(condition) \
         assert(condition)

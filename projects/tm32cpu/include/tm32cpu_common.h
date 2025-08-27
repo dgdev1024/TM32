@@ -61,7 +61,7 @@
     fprintf(stderr, "[%s | ERROR] " fmt "\n", __func__, ##__VA_ARGS__)
 #define TM32CPU_LogErrno(fmt, ...) \
     fprintf(stderr, "[%s | ERROR] " fmt ": %s\n", __func__, ##__VA_ARGS__, strerror(errno))
-#if defined(TM_DEBUG)
+#if defined(TM32_DEBUG)
     #define TM32CPU_LogDebug(fmt, ...) \
         fprintf(stdout, "[%s | DEBUG] " fmt "\n", __func__, ##__VA_ARGS__)
 #else
@@ -79,7 +79,7 @@
     do { if (ptr != NULL) { free(ptr); ptr = NULL; } } while(0)
 
 // Early Exit/Return Macros
-#if defined(TM_DEBUG)
+#if defined(TM32_DEBUG)
     #include <assert.h>
     #define TM32CPU_HardAssert(condition) \
         assert(condition)

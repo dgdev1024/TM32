@@ -185,6 +185,10 @@ TM32ASM_Token* TM32ASM_CreateToken (
     TM32ASM_TokenType   type
 )
 {
+    // A lexeme is required. If a token does not have a lexeme, then `\0` should
+    // be passed in for the lexeme.
+    TM32ASM_ReturnValueIfNull(lexeme, NULL);
+
     TM32ASM_Token* token = TM32ASM_CreateZero(1, TM32ASM_Token);
     if (token == NULL)
     {

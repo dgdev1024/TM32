@@ -39,7 +39,7 @@ typedef enum
     TM32ASM_TT_HEXADECIMAL,             /** @brief Hexadecimal Literal (`0xA`, `0xFF`, etc.) */
     TM32ASM_TT_FIXED_POINT,             /** @brief Fixed-Point Literal (`1.0`, `-0.5`, etc.) */
     TM32ASM_TT_CHARACTER,               /** @brief Character Literal (`'a'`, `'b'`, `'\n'`, `'\0'`, etc.) */
-    TM32ASM_TT_PIXEL,                   /** @brief Pixel Literal */
+    TM32ASM_TT_GRAPHICS,                /** @brief Graphics Literal (`` `01012323 ``) */
     TM32ASM_TT_STRING,                  /** @brief String Literal (`"Hello, World!"`, `"Sample Text"`, etc.) */
     
     // Parameter Tokens
