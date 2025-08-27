@@ -302,11 +302,11 @@ assembler directives are supported:
             (the 64 KB of Quick RAM / I/O Registers)
 - `.db <data1>[, <data2>, ...]`, `.byte <data1>[, <data2>, ...]`: Defines one or
     more bytes of data (8 bits each). Each `<data>` can be an integer literal,
-    a character literal, an ASCII string literal, a 1BPP pixel literal, a 
-    variable, a constant, or an expression that evaluates to an integer value, 
+    a character literal, an ASCII string literal, a 1BPP graphics literal, a
+    variable, a constant, or an expression that evaluates to an integer value,
     truncated to 8 bits.
-    - If a pixel literal is provided, it will be converted to its corresponding
-        8-bit value and stored as a byte.
+    - If a graphics literal is provided, it will be treated as a 1BPP graphics
+        literal, and translated to its corresponding 8-bit value.
     - If a string literal is provided, each character in the string will be
         converted to its corresponding ASCII value and stored as a byte. The
         string is not null-terminated, and will need to be null-terminated
@@ -321,10 +321,10 @@ assembler directives are supported:
         in memory, without initializing them to any specific value.
 - `.dw <data1>[, <data2>, ...]`, `.word <data1>[, <data2>, ...]`: Defines one or
     more words of data (16 bits each). Each `<data>` can be an integer literal,
-    a character literal, a 1BPP or 2BPP pixel literal, a variable, a constant, or an
+    a character literal, a 2BPP graphics literal, a variable, a constant, or an
     expression that evaluates to an integer value, truncated to 16 bits.
-    - If a pixel literal is provided, it will be converted to its corresponding
-        16-bit value and stored as a word.
+    - If a graphics literal is provided, it will be treated as a 2BPP graphics
+        literal, and translated to its corresponding 16-bit value.
     - If an expression is provided, it will be evaluated at assembly time, and
         the resulting value will be truncated to 16 bits and stored as a word.
     - Multiple data values can be defined in a single directive, separated by
@@ -335,10 +335,10 @@ assembler directives are supported:
         in memory, without initializing them to any specific value.
 - `.dd <data1>[, <data2>, ...]`, `.dword <data1>[, <data2>, ...]`: Defines one or
     more double words of data (32 bits each). Each `<data>` can be an integer
-    literal, 1BPP, 2BPP or 4BPP pixel literal, a variable, a constant, or an
+    literal, 4BPP graphics literal, a variable, a constant, or an
     expression that evaluates to an integer value, truncated to 32 bits.
-    - If a pixel literal is provided, it will be converted to its corresponding
-        32-bit value and stored as a double word.
+    - If a graphics literal is provided, it will be treated as a 4BPP graphics
+        literal, and translated to its corresponding 32-bit value.
     - If an expression is provided, it will be evaluated at assembly time, and
         the resulting value will be truncated to 32 bits and stored as a double
         word.
@@ -409,17 +409,22 @@ types of literals and operators are supported:
         integer representation, in which the upper 32 bits represent the integer
         part, and the lower 32 bits represent the fractional part.
 - **Character Literals**: Enclosed in single quotes (eg. `'A'`, `'\n'`, `'\x41'`).
-- **Pixel Literals**: RGBDS-inspired, Game Boy-style pixel literals, prefixed
-    by a single backtick `` ` ``. These literals represent graphics data in various
-    bit depths, where each character represents one or more pixels:
-    - **One bit per pixel (1BPP)**: Each character represents one pixel, using
-        `.` for 0 and `#` for 1. Example: `` `..##..## `` represents the byte `0x33`.
-    - **Two bits per pixel (2BPP)**: Each character represents one pixel using
-        four possible values: `.` (00), `+` (01), `-` (10), `#` (11). 
-        Example: `` `.+-# `` represents the byte `0x1B` (00-01-10-11).
-    - **Four bits per pixel (4BPP)**: Each character represents one pixel using
-        sixteen possible values: `0123456789ABCDEF` mapping to their respective
-        hex values. Example: `` `0F `` represents the byte `0x0F`.
+- **Graphics Literal**: RGBDS-style, Game Boy-inspired graphics literals are a
+    sequence of specific numbers prefixed by a single backtick (`` ` ``). The
+    number of digits, and what those digits can be depend upon the specific
+    graphics format being used (e.g., 1BPP, 2BPP)
+    - **One Bit Per Pixel (1BPP)**: After the backtick, eight digits between 0
+        and 1 are provided, resulting in one byte of tile data which would
+        produce that row of pixels.
+        - *Example*: `` `01011001 `` would produce the byte `0x59`.
+    - **Two Bits Per Pixel (2BPP)**: After the backtick, eight digits between 0
+        and 3 are provided, resulting in two bytes of tile data which would
+        produce that row of pixels.
+        - *Example*: `` `01012323 `` would produce the word `0x0F55`.
+    - **Four Bits Per Pixel (4BPP)**: After the backtick, eight digits between 0
+        and 15 are provided, resulting in four bytes of tile data which would
+        produce that row of pixels.
+        - *Example*: `` `01234567 `` would produce the double word `0x55330F00`.
 - **String Literals**: Enclosed in double quotes (eg. `"Hello, World!"`).
     - Escape sequences are supported (eg. `"\n"`, `"\t"`, `"\x41"`).
     - String literals can be used in data definition directives (eg. `.db`,
@@ -605,8 +610,8 @@ types of operands are supported:
     - `pc`: Parity clear (execute if the parity flag is clear).
     - `ss`: Sign set (execute if the sign flag is set).
     - `sc`: Sign clear (execute if the sign flag is clear).
-- **Immediate Values**: Integer literals, fixed-point literals, character 
-    literals, pixel literals, variables, constants, or expressions that evaluate
+- **Immediate Values**: Integer literals, fixed-point literals, character
+    literals, graphics literals, variables, constants, or expressions that evaluate
     to an integer value.
     - For fixed-point literals, the 32-bit portion representing the integer part
         is used as the immediate value, and the fractional part is discarded.

@@ -155,7 +155,7 @@ The lexer recognizes and categorizes the following types of tokens:
   macros. Must start with a letter or underscore, followed by letters, digits,
   or underscores.
 - **Literals**: Numeric values in various formats (binary, octal, decimal,
-  hexadecimal), character literals, fixed-point literals, pixel literals, and
+  hexadecimal), character literals, fixed-point literals, graphics literals, and
   string literals.
 - **Operators**: Arithmetic, bitwise, assignment, comparison, and logical
   operators as defined in the TM32 assembly language specification.
