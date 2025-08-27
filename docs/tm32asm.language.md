@@ -43,8 +43,8 @@ A source file in the TM32 Assembly Language is a line-based text file which may
     to be executed by the assembler, rather than the CPU.
 - **Instructions**: An identifier followed by operands indicates a CPU
     instruction to be assembled and executed by the CPU.
-- **Macros**: Using the `.macro` directive, users may define macros for
-    reusable code snippets with parameters.
+- **Macros**: Using the `.macro`, `.def` and `.define` directives, users may 
+    define macros for reusable code snippets with parameters (`.macro` only).
 - **Conditional Assembly**: Using the `.if`, `.else`, `.elif`, and `.endif`
     directives, users may include or exclude code based on conditions.
 - **Repetition**: Using the `.repeat` and `.endrepeat` directives, users may
@@ -112,6 +112,9 @@ assembler. The following preprocessor directives are supported:
     - Simple macros defined with `.define` or `.def` do not support parameters.
     - If a simple macro is redefined later in the source file (or another
         included file), the new definition will override the previous one.
+    - Simple text substitution macros can be used anywhere in the source file
+        (or another included file) after their definition. Unlike `.macro`, they
+        can even be used in the middle of other instructions and expressions.
 - `.macro <name>`: Begins the definition of a macro named `<name>`. Macros are
     reusable code snippets that can take parameters. The macro definition ends
     with the `.endmacro` or `.endm` directive. When the macro is invoked by name,
@@ -425,8 +428,9 @@ types of literals and operators are supported:
 - **Identifiers**: Variable and constant names used in the `.let` and `.const`
     directives, as well as address labels defined in the source file and other
     files included via the `.include` directive (postfixed by a colon).
-    - Identifiers must start with a letter (A-Z, a-z) or underscore (`_`),
-        followed by any combination of letters, digits (0-9), and underscores.
+    - Identifiers must start with a letter (A-Z, a-z), underscore (`_`) or
+        period (`.`), followed by any combination of letters, digits (0-9), 
+        underscores and periods.
     - Identifiers are case-sensitive (eg. `MyVar` and `myvar` are different).
     - Identifiers cannot be the same as reserved keywords (eg. directive names,
         instruction names, etc.).
@@ -634,12 +638,12 @@ types of operands are supported:
 All TM32 instructions follow a consistent format:
 
 ```assembly
-instruction [operand1[, operand2[, operand3]]]
+instruction [operand1[, operand2]]
 ```
 
 Instructions are case-insensitive, but operands (particularly register names and 
 labels) maintain their defined case sensitivity. Each instruction may take zero, 
-one, two, or three operands depending on the specific instruction.
+one or two operands depending on the specific instruction.
 
 ### 5.2 Register Usage Guidelines
 
@@ -803,6 +807,27 @@ directive:
     - If `xx` is greater than the number of parameters passed to the macro,
         an error will be raised during the assembly process.
 
+### 6.2 The `.define` Directive (Simple Text Substitution)
+
+Another, simpler form of macro definition and use is the simple text substitution
+macro. These are defined using the `.define` or `.def` directives, and allow for
+basic text replacement in the source code.
+
+Unlike `.macro`, these simple text substitution macros do not support parameters
+or complex code generation, and are limited to straightforward text replacement.
+However, these macros can be used anywhere in the source file (or any file it
+includes) after its definition, even in the middle of (or as an operand of)
+other instructions, and even can be used within expressions.
+
+The syntax for defining a simple text substitution macro is as follows:
+
+```assembly
+.define MACRO_NAME      "replacement_text"          ; The replacement text must be a string.
+.define MACRO_NAME_2    "replacement_text_2"
+                        "more_replacement_text"     ; The replacement text can also be multiple
+                                                    ; strings in sequence. They will be concatenated.
+```
+
 ## 7. Format and Style Guidelines
 
 The TM32 Assembly Language is a line-oriented language, where each line in the
@@ -845,6 +870,8 @@ For consistency and readability, the following naming conventions are recommende
 - **Constants**: Use ALL_CAPS with underscores (e.g., `SCREEN_WIDTH`, `MAX_PLAYERS`)
 - **Variables**: Use lowercase with underscores (e.g., `player_score`, `current_level`)
 - **Macros**: Use PascalCase (e.g., `SetPixel`, `DrawSprite`)
+
+Use any naming convention you wish, but be consistent within your project.
 
 ### 7.3 Indentation and Spacing
 
@@ -1259,6 +1286,21 @@ macro_demo:
         .endif
     .endif
 .endmacro
+```
+
+### 8.9 Simple Text Substitution
+
+```assembly
+.define TARGET_ADDRESS "[0x46]"
+.define LOAD_PORT "ldp"
+.define STORE_PORT "stp"
+.define MOVE_TO_B "mv b, a"
+
+.text
+main:
+    LOAD_PORT a, TARGET_ADDRESS
+    MOVE_TO_B
+    STORE_PORT TARGET_ADDRESS, a
 ```
 
 ### 8.9 Conditional Assembly and Loops

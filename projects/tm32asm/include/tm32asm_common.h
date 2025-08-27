@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <math.h>
 #include <errno.h>
 
 /* Constant Macros ************************************************************/

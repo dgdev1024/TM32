@@ -161,8 +161,8 @@ The lexer recognizes and categorizes the following types of tokens:
   operators as defined in the TM32 assembly language specification.
 - **Punctuation**: Colons (`:`) for labels, semicolons (`;`) for comments,
   commas (`,`) for separating operands, and other punctuation marks.
-- **Whitespace**: Spaces, tabs, and newlines used for formatting. Most
-  whitespace is ignored, but newlines are significant for line-based parsing.
+- **Whitespace**: Spaces, tabs, and newlines used for formatting. These are
+  ignored.
 
 #### 3.1.2 Comment Handling
 

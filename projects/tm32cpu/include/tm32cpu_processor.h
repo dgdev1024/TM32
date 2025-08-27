@@ -191,6 +191,72 @@ typedef enum
     TM32CPU_EC_HARDWARE_ERROR,      /** @brief Hardware error - one of the hardware components connected to the processor's address bus reported an error during cycle consumption. */
 } TM32CPU_ExceptionCode;
 
+/**
+ * @brief   Enumerates the TM32CPU processor's instructions, and their base
+ *          opcodes.
+ */
+typedef enum
+{
+    TM32CPU_IT_NOP      = 0x0000,
+    TM32CPU_IT_STOP     = 0x0100,
+    TM32CPU_IT_HALT     = 0x0200,
+    TM32CPU_IT_SEC      = 0x0300,
+    TM32CPU_IT_CEC      = 0x0400,
+    TM32CPU_IT_DI       = 0x0500,
+    TM32CPU_IT_EI       = 0x0600,
+    TM32CPU_IT_DAA      = 0x0700,
+    TM32CPU_IT_SCF      = 0x0800,
+    TM32CPU_IT_CCF      = 0x0900,
+    TM32CPU_IT_FLG      = 0x0A00,
+    TM32CPU_IT_STF      = 0x0B00,
+    TM32CPU_IT_CLF      = 0x0C00,
+
+    TM32CPU_IT_LD       = 0x1000,
+    TM32CPU_IT_LDH      = 0x1300,
+    TM32CPU_IT_LDP      = 0x1500,
+    TM32CPU_IT_ST       = 0x1700,
+    TM32CPU_IT_STH      = 0x1900,
+    TM32CPU_IT_STP      = 0x1B00,
+    TM32CPU_IT_MV       = 0x1D00,
+    TM32CPU_IT_POP      = 0x1E00,
+    TM32CPU_IT_PUSH     = 0x1F00,
+
+    TM32CPU_IT_JMP      = 0x2000,
+    TM32CPU_IT_JPB      = 0x2200,
+    TM32CPU_IT_CALL     = 0x2300,
+    TM32CPU_IT_INT      = 0x2400,
+    TM32CPU_IT_RET      = 0x2500,
+    TM32CPU_IT_RETI     = 0x2600,
+
+    TM32CPU_IT_INC      = 0x3000,
+    TM32CPU_IT_DEC      = 0x3200,
+    TM32CPU_IT_ADD      = 0x3400,
+    TM32CPU_IT_ADC      = 0x3700,
+    TM32CPU_IT_SUB      = 0x3A00,
+    TM32CPU_IT_SBC      = 0x3D00,
+
+    TM32CPU_IT_AND      = 0x4000,
+    TM32CPU_IT_OR       = 0x4300,
+    TM32CPU_IT_XOR      = 0x4600,
+    TM32CPU_IT_NOT      = 0x4C00,
+
+    TM32CPU_IT_CMP      = 0x5000,
+
+    TM32CPU_IT_SLA      = 0x6000,
+    TM32CPU_IT_SRA      = 0x6200,
+    TM32CPU_IT_SRL      = 0x6400,
+    TM32CPU_IT_RL       = 0x6600,
+    TM32CPU_IT_RLC      = 0x6800,
+    TM32CPU_IT_RR       = 0x6A00,
+    TM32CPU_IT_RRC      = 0x6C00,
+
+    TM32CPU_IT_BIT      = 0x7000,
+    TM32CPU_IT_TOG      = 0x7200,
+    TM32CPU_IT_SET      = 0x7400,
+    TM32CPU_IT_RES      = 0x7600,
+    
+} TM32CPU_InstructionType;
+
 /* Public Function Prototypes *************************************************/
 
 /**
