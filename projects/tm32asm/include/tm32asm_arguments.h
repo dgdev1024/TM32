@@ -67,4 +67,18 @@ const char* TM32ASM_GetArgumentValue (
     int         index
 );
 
+/**
+ * @brief   Retrieves a positional argument (non-option argument).
+ * 
+ * Positional arguments are arguments that are not preceded by option flags
+ * and are not values for options.
+ *
+ * @param   index   The index of the positional argument to retrieve (0-based).
+ *
+ * @return  The positional argument if found, or `NULL` if not found.
+ */
+const char* TM32ASM_GetPositionalArgument (
+    int index
+);
+
 #endif // TM32ASM_ARGUMENTS_H

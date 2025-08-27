@@ -41,6 +41,14 @@ typedef enum
     TM32ASM_TT_CHARACTER,               /** @brief Character Literal (`'a'`, `'b'`, `'\n'`, `'\0'`, etc.) */
     TM32ASM_TT_PIXEL,                   /** @brief Pixel Literal */
     TM32ASM_TT_STRING,                  /** @brief String Literal (`"Hello, World!"`, `"Sample Text"`, etc.) */
+    
+    // Parameter Tokens
+    TM32ASM_TT_PARAM_POSITIONAL,        /** @brief Macro Positional Parameter (`@1`, `@2`, `@3`, etc.) */
+    TM32ASM_TT_PARAM_MACRO_NAME,        /** @brief Macro Invocation Name (`@0`) */
+    TM32ASM_TT_PARAM_COUNT,             /** @brief Macro Invocation Parameter Count (`@#`, `@NARG`) */
+    TM32ASM_TT_PARAM_LIST,              /** @brief Macro Invocation Parameter List (`@*`) */
+    TM32ASM_TT_PARAM_LIST_NOT_FIRST,    /** @brief Macro Invocation Parameter List, Execept for First Argument (`@-`) */
+    TM32ASM_TT_PARAM_MANGLE_UNIQUE,     /** @brief Macro Invocation Based Unique Name (`@?`) */
 
     // Arithmetic and Bitwise Operators
     TM32ASM_TT_PLUS,                    /** @brief Addition Operator (`+`) */
@@ -94,6 +102,7 @@ typedef enum
     // Punctuation Tokens
     TM32ASM_TT_COMMA,                   /** @brief Punctuation Token (`,`) */
     TM32ASM_TT_COLON,                   /** @brief Punctuation Token (`:`) */
+    TM32ASM_TT_AT,                      /** @brief Punctuation Token (`@@`) */
     
 } TM32ASM_TokenType;
 

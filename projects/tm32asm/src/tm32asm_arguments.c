@@ -93,3 +93,47 @@ const char* TM32ASM_GetArgumentValue (
 
     return NULL;
 }
+
+const char* TM32ASM_GetPositionalArgument (
+    int index
+)
+{
+    int positionalCount = 0;
+    
+    for (int i = 1; i < s_argCount; ++i)
+    {
+        const char* arg = s_argValues[i];
+        
+        // Skip option flags and their values
+        if (arg[0] == '-')
+        {
+            // This is an option flag - skip it and its values
+            continue;
+        }
+        
+        // Check if this argument is a value for a preceding option
+        bool isOptionValue = false;
+        if (i > 1 && s_argValues[i - 1][0] == '-')
+        {
+            // Previous argument was an option flag
+            // Check if it's a known option that takes a value
+            const char* prevArg = s_argValues[i - 1];
+            if ((strcmp(prevArg, "--output") == 0) || (strcmp(prevArg, "-o") == 0))
+            {
+                isOptionValue = true;
+            }
+        }
+        
+        if (!isOptionValue)
+        {
+            // This is a positional argument
+            if (positionalCount == index)
+            {
+                return arg;
+            }
+            positionalCount++;
+        }
+    }
+    
+    return NULL;
+}

@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <errno.h>
+#include <tm32cpu_common.h>
 
 /* Constant Macros ************************************************************/
 
