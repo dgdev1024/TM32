@@ -457,6 +457,24 @@ types of literals and operators are supported:
 - **Ternary Operator**: `? :` (for conditional expressions, in the form
     `<condition> ? <true_value> : <false_value>`).
 
+#### 4.2.1 Operator Precedence
+
+Expressions in the TM32 Assembly Language are evaulated according to the following
+operator precedence:
+
+1. **Logical NOT, Bitwise NOT**: `!`, `~` (highest precedence, evaluated first)
+2. **Exponentiation**: `**`
+3. **Multiplication/Division**: `*`, `/`, `%`
+4. **Addition/Subtraction**: `+`, `-`
+5. **Bitwise Shift**: `<<`, `>>`
+6. **Bitwise AND**: `&`
+7. **Bitwise XOR**: `^`
+8. **Bitwise OR**: `|`
+9. **Comparison**: `==`, `!=`, `<`, `>`, `<=`, `>=`
+10. **Logical AND**: `&&`
+11. **Logical OR**: `||`
+12. **Ternary Operators**: `? :` (lowest precedence, evaluated last)
+
 ## 4.3 Built-in Functions
 
 The TM32 Assembly Language supports a collection of built-in functions which can
