@@ -1,0 +1,29 @@
+; Edge case: Maximum iterations and infinite loop prevention
+.let counter = 0
+.while counter < 1000  ; Large iteration count
+  .let counter = counter + 1
+  .if counter == 999
+    .break
+  .endif
+.endwhile
+
+; Potential infinite loop (should be caught)
+.let infinite_counter = 0
+.while infinite_counter >= 0  ; Always true condition
+  .let infinite_counter = infinite_counter + 1
+  .if infinite_counter > 10000  ; Safety break
+    .error Infinite loop detected
+  .endif
+.endwhile
+
+; Extreme repeat count
+.repeat 1000
+  nop
+.endr
+
+; Large for loop range
+.for big_loop 1 1000
+  .if big_loop == 500
+    .break
+  .endif
+.endfor

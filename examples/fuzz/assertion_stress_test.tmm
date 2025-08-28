@@ -1,0 +1,35 @@
+; Edge case: Assertion stress test with complex conditions
+.let test_flag = 1
+.let zero_flag = 0
+
+; Basic assertions
+.assert test_flag
+.assert 1
+.assert 42
+.assert 0x1
+
+; Failing assertions (each should stop processing)
+.assert zero_flag This should fail with zero flag
+.assert 0 This should fail with literal zero
+.assert nonexistent_symbol This should fail with undefined symbol
+
+; Assertions with complex expressions (limited by current implementation)
+.let complex_value = 100
+.assert complex_value Complex value assertion
+
+; Multiple consecutive assertions
+.assert 1 First assertion
+.assert 1 Second assertion  
+.assert 1 Third assertion
+
+; Assertion in nested contexts
+.if 1
+  .assert 1 Assertion inside if block
+  .for i 1 2
+    .assert i Assertion inside for loop
+    .while i < 3
+      .assert 1 Assertion inside while loop
+      .let i = i + 1
+    .endwhile
+  .endfor
+.endif

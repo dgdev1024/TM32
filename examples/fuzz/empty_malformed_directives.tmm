@@ -1,0 +1,39 @@
+; Edge case: Empty constructs and malformed directives
+.if 1
+.endif
+
+.while 0
+.endwhile
+
+.for i 1 0  ; Invalid range
+.endfor
+
+.repeat 0   ; Zero repetitions
+.endr
+
+; Empty messages
+.warn
+.error
+.assert 1
+
+; Malformed directives (missing parameters)
+.let
+.const
+.if
+.while
+.for
+.repeat
+.file
+.line
+
+; Invalid parameters
+.let = 5
+.const = 
+.if 
+.while 
+.for i
+.for i 1
+.repeat 
+.assert
+.file 123
+.line abc

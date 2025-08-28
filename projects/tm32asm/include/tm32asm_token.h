@@ -133,6 +133,7 @@ typedef enum
     TM32ASM_DT_ENDFOR,              /** @brief End For Directive (`.endfor`, `.endf`) */
     TM32ASM_DT_CONTINUE,            /** @brief Continue Directive (`.continue`) */
     TM32ASM_DT_BREAK,               /** @brief Break Directive (`.break`) */
+    TM32ASM_DT_WARN,                /** @brief Warning Directive (`.warn`) */
     TM32ASM_DT_ERROR,               /** @brief Error Directive (`.error`) */
     TM32ASM_DT_ASSERT,              /** @brief Assert Directive (`.assert`) */
     TM32ASM_DT_FILE,                /** @brief File Directive (`.file`) */

@@ -21,8 +21,12 @@
 #define INITIAL_SYMBOL_CAPACITY     32
 #define INITIAL_MACRO_CAPACITY      16
 #define INITIAL_CONDITIONAL_CAPACITY 8
+#define INITIAL_REPEAT_CAPACITY     8
+#define INITIAL_WHILE_CAPACITY      8
+#define INITIAL_FOR_CAPACITY        8
 #define INITIAL_INCLUDE_CAPACITY    16
 #define MAX_MACRO_DEPTH             64
+#define MAX_WHILE_ITERATIONS        10000  // Safety limit to prevent infinite loops
 
 /* Private Function Prototypes ************************************************/
 
@@ -213,6 +217,227 @@ static bool TM32ASM_HandleEndifDirective (
 );
 
 /**
+ * @brief   Handles the .repeat/.rept directive for repetition.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .repeat/.rept directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleRepeatDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .endrepeat/.endr directive for repetition.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .endrepeat/.endr directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleEndrepeatDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .while directive for conditional looping.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .while directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleWhileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .endwhile/.endw directive for conditional looping.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .endwhile/.endw directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleEndwhileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .for directive for counted loops.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .for directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleForDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .endfor/.endf directive for counted loops.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .endfor/.endf directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleEndforDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .continue directive to skip the rest of the current loop iteration.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .continue directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleContinueDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .break directive to exit the current loop early.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .break directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleBreakDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .warn directive to emit a warning message.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .warn directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleWarnDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .error directive to emit an error message and halt assembly.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .error directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleErrorDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .assert directive to check a condition and emit an error if false.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .assert directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleAssertDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .file directive to set the current filename for debug info.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .file directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleFileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .line directive to set the current line number for debug info.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream     The input token stream.
+ * @param   outputStream    The output token stream.
+ * @param   token           The .line directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleLineDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
  * @brief   Handles symbol substitution for identifier tokens.
  * 
  * @param   preprocessor    The preprocessor instance.
@@ -297,11 +522,59 @@ TM32ASM_Preprocessor* TM32ASM_CreatePreprocessor ()
     preprocessor->conditionalCount = 0;
     preprocessor->conditionalCapacity = INITIAL_CONDITIONAL_CAPACITY;
     
+    // Initialize repetition stack
+    preprocessor->repeats = TM32ASM_Create(INITIAL_REPEAT_CAPACITY, TM32ASM_RepeatState);
+    if (preprocessor->repeats == NULL) {
+        TM32ASM_LogErrno("Could not allocate memory for repetition stack");
+        TM32ASM_Destroy(preprocessor->conditionals);
+        TM32ASM_Destroy(preprocessor->macros);
+        TM32ASM_Destroy(preprocessor->symbols);
+        TM32ASM_Destroy(preprocessor);
+        return NULL;
+    }
+    preprocessor->repeatCount = 0;
+    preprocessor->repeatCapacity = INITIAL_REPEAT_CAPACITY;
+    
+    // Initialize while loop stack
+    preprocessor->whiles = TM32ASM_Create(INITIAL_WHILE_CAPACITY, TM32ASM_WhileState);
+    if (preprocessor->whiles == NULL) {
+        TM32ASM_LogErrno("Could not allocate memory for while loop stack");
+        TM32ASM_Destroy(preprocessor->repeats);
+        TM32ASM_Destroy(preprocessor->conditionals);
+        TM32ASM_Destroy(preprocessor->macros);
+        TM32ASM_Destroy(preprocessor->symbols);
+        TM32ASM_Destroy(preprocessor);
+        return NULL;
+    }
+    preprocessor->whileCount = 0;
+    preprocessor->whileCapacity = INITIAL_WHILE_CAPACITY;
+    
+    // Initialize for loop stack
+    preprocessor->fors = TM32ASM_Create(INITIAL_FOR_CAPACITY, TM32ASM_ForState);
+    if (preprocessor->fors == NULL) {
+        TM32ASM_LogErrno("Could not allocate memory for for loop stack");
+        TM32ASM_Destroy(preprocessor->whiles);
+        TM32ASM_Destroy(preprocessor->repeats);
+        TM32ASM_Destroy(preprocessor->conditionals);
+        TM32ASM_Destroy(preprocessor->macros);
+        TM32ASM_Destroy(preprocessor->symbols);
+        TM32ASM_Destroy(preprocessor);
+        return NULL;
+    }
+    preprocessor->forCount = 0;
+    preprocessor->forCapacity = INITIAL_FOR_CAPACITY;
+    
+    // Initialize loop control state
+    preprocessor->loopControl = TM32ASM_LOOP_CONTROL_NONE;
+    
     // Initialize include stack
     preprocessor->includeStack = TM32ASM_Create(INITIAL_INCLUDE_CAPACITY, const char*);
     if (preprocessor->includeStack == NULL)
     {
         TM32ASM_LogErrno("Could not allocate memory for include stack");
+        TM32ASM_Destroy(preprocessor->fors);
+        TM32ASM_Destroy(preprocessor->whiles);
+        TM32ASM_Destroy(preprocessor->repeats);
         TM32ASM_Destroy(preprocessor->conditionals);
         TM32ASM_Destroy(preprocessor->macros);
         TM32ASM_Destroy(preprocessor->symbols);
@@ -317,6 +590,9 @@ TM32ASM_Preprocessor* TM32ASM_CreatePreprocessor ()
     {
         TM32ASM_LogErrno("Could not allocate memory for include paths");
         TM32ASM_Destroy(preprocessor->includeStack);
+        TM32ASM_Destroy(preprocessor->fors);
+        TM32ASM_Destroy(preprocessor->whiles);
+        TM32ASM_Destroy(preprocessor->repeats);
         TM32ASM_Destroy(preprocessor->conditionals);
         TM32ASM_Destroy(preprocessor->macros);
         TM32ASM_Destroy(preprocessor->symbols);
@@ -333,6 +609,9 @@ TM32ASM_Preprocessor* TM32ASM_CreatePreprocessor ()
         TM32ASM_LogErrno("Could not allocate memory for included files tracking");
         TM32ASM_Destroy(preprocessor->includePaths);
         TM32ASM_Destroy(preprocessor->includeStack);
+        TM32ASM_Destroy(preprocessor->fors);
+        TM32ASM_Destroy(preprocessor->whiles);
+        TM32ASM_Destroy(preprocessor->repeats);
         TM32ASM_Destroy(preprocessor->conditionals);
         TM32ASM_Destroy(preprocessor->macros);
         TM32ASM_Destroy(preprocessor->symbols);
@@ -346,6 +625,10 @@ TM32ASM_Preprocessor* TM32ASM_CreatePreprocessor ()
     preprocessor->processingActive = true;
     preprocessor->macroDepth = 0;
     preprocessor->maxMacroDepth = MAX_MACRO_DEPTH;
+    
+    // Initialize debug information state
+    preprocessor->debugFilename = NULL;
+    preprocessor->debugLine = 0;
     
     TM32ASM_LogDebug("Created preprocessor instance");
     return preprocessor;
@@ -376,6 +659,42 @@ void TM32ASM_DestroyPreprocessor (
         // Destroy conditional stack
         TM32ASM_Destroy(preprocessor->conditionals);
         
+        // Destroy repetition stack
+        if (preprocessor->repeats != NULL) {
+            for (uint32_t i = 0; i < preprocessor->repeatCount; ++i) {
+                if (preprocessor->repeats[i].body != NULL) {
+                    TM32ASM_DestroyTokenStream(preprocessor->repeats[i].body);
+                }
+            }
+            TM32ASM_Destroy(preprocessor->repeats);
+        }
+        
+        // Destroy while loop stack
+        if (preprocessor->whiles != NULL) {
+            for (uint32_t i = 0; i < preprocessor->whileCount; ++i) {
+                if (preprocessor->whiles[i].body != NULL) {
+                    TM32ASM_DestroyTokenStream(preprocessor->whiles[i].body);
+                }
+                if (preprocessor->whiles[i].condition != NULL) {
+                    TM32ASM_DestroyTokenStream(preprocessor->whiles[i].condition);
+                }
+            }
+            TM32ASM_Destroy(preprocessor->whiles);
+        }
+        
+        // Destroy for loop stack
+        if (preprocessor->fors != NULL) {
+            for (uint32_t i = 0; i < preprocessor->forCount; ++i) {
+                if (preprocessor->fors[i].body != NULL) {
+                    TM32ASM_DestroyTokenStream(preprocessor->fors[i].body);
+                }
+                if (preprocessor->fors[i].variable != NULL) {
+                    free(preprocessor->fors[i].variable);
+                }
+            }
+            TM32ASM_Destroy(preprocessor->fors);
+        }
+        
         // Destroy include stack
         TM32ASM_Destroy(preprocessor->includeStack);
         
@@ -393,6 +712,11 @@ void TM32ASM_DestroyPreprocessor (
                 free((char*)preprocessor->includedFiles[i]);
             }
             TM32ASM_Destroy(preprocessor->includedFiles);
+        }
+        
+        // Clean up debug information
+        if (preprocessor->debugFilename != NULL) {
+            TM32ASM_Destroy(preprocessor->debugFilename);
         }
         
         TM32ASM_Destroy(preprocessor);
@@ -973,9 +1297,50 @@ static bool TM32ASM_HandleDirective (
         return TM32ASM_HandleEndifDirective(preprocessor, inputStream, outputStream, token);
     }
     
+    // Repetition directives are also always processed (they control processing flow)
+    if (strcmp(token->lexeme, ".repeat") == 0 || strcmp(token->lexeme, ".rept") == 0) {
+        return TM32ASM_HandleRepeatDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".endrepeat") == 0 || strcmp(token->lexeme, ".endr") == 0) {
+        return TM32ASM_HandleEndrepeatDirective(preprocessor, inputStream, outputStream, token);
+    }
+    
+    // While loop directives are also always processed (they control processing flow)
+    if (strcmp(token->lexeme, ".while") == 0) {
+        return TM32ASM_HandleWhileDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".endwhile") == 0 || strcmp(token->lexeme, ".endw") == 0) {
+        return TM32ASM_HandleEndwhileDirective(preprocessor, inputStream, outputStream, token);
+    }
+    
+    // For loop directives are also always processed (they control processing flow)
+    if (strcmp(token->lexeme, ".for") == 0) {
+        return TM32ASM_HandleForDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".endfor") == 0 || strcmp(token->lexeme, ".endf") == 0) {
+        return TM32ASM_HandleEndforDirective(preprocessor, inputStream, outputStream, token);
+    }
+    
     // Other directives are only processed if we're in an active context
     if (!TM32ASM_ShouldProcessTokens(preprocessor)) {
         return true; // Skip processing but don't error
+    }
+    
+    // Loop control directives
+    if (strcmp(token->lexeme, ".continue") == 0) {
+        return TM32ASM_HandleContinueDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".break") == 0) {
+        return TM32ASM_HandleBreakDirective(preprocessor, inputStream, outputStream, token);
+    }
+    
+    // Debugging directives are only processed in active contexts
+    if (strcmp(token->lexeme, ".warn") == 0) {
+        return TM32ASM_HandleWarnDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".error") == 0) {
+        return TM32ASM_HandleErrorDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".assert") == 0) {
+        return TM32ASM_HandleAssertDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".file") == 0) {
+        return TM32ASM_HandleFileDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".line") == 0) {
+        return TM32ASM_HandleLineDirective(preprocessor, inputStream, outputStream, token);
     }
     
     // Check for specific directives
@@ -1401,7 +1766,8 @@ static bool TM32ASM_HandleIfDirective (
         conditionToken->type == TM32ASM_TT_BINARY ||
         conditionToken->type == TM32ASM_TT_OCTAL) {
         // For numeric literals, non-zero is true
-        conditionTrue = (conditionToken->param != 0);
+        uint32_t value = TM32ASM_GetIntegerLexeme(conditionToken);
+        conditionTrue = (value != 0);
     } else if (conditionToken->type == TM32ASM_TT_IDENTIFIER) {
         // Look up the symbol
         TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, conditionToken->lexeme);
@@ -1414,12 +1780,8 @@ static bool TM32ASM_HandleIfDirective (
                 symbol->value->type == TM32ASM_TT_HEXADECIMAL ||
                 symbol->value->type == TM32ASM_TT_BINARY ||
                 symbol->value->type == TM32ASM_TT_OCTAL) {
-                // Use param if available, otherwise parse the lexeme
-                int32_t value = symbol->value->param;
-                if (value == 0 && symbol->value->lexeme != NULL) {
-                    // Try to parse the lexeme as a fallback
-                    value = atoi(symbol->value->lexeme);
-                }
+                // Use TM32ASM_GetIntegerLexeme for proper numeric parsing
+                uint32_t value = TM32ASM_GetIntegerLexeme(symbol->value);
                 conditionTrue = (value != 0);
             } else {
                 // For non-numeric types, consider them false
@@ -1636,5 +1998,1001 @@ static bool TM32ASM_HandleEndifDirective (
     
     TM32ASM_LogDebug("Conditional block ended");
     
+    return true;
+}
+
+static bool TM32ASM_HandleRepeatDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .repeat/.rept directive at %s:%u", token->filename, token->line);
+    
+    // Get the repeat count token
+    TM32ASM_Token* countToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (countToken == NULL) {
+        TM32ASM_LogError(".repeat/.rept directive missing count argument at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Parse the repeat count
+    uint32_t repeatCount = 0;
+    if (countToken->type == TM32ASM_TT_DECIMAL || 
+        countToken->type == TM32ASM_TT_BINARY ||
+        countToken->type == TM32ASM_TT_OCTAL ||
+        countToken->type == TM32ASM_TT_HEXADECIMAL) {
+        // Parse integer directly
+        repeatCount = (uint32_t)strtoul(countToken->lexeme, NULL, 0);
+    } else if (countToken->type == TM32ASM_TT_IDENTIFIER) {
+        // Try to substitute with a symbol
+        TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, countToken->lexeme);
+        if (symbol != NULL && (symbol->value->type == TM32ASM_TT_DECIMAL ||
+                               symbol->value->type == TM32ASM_TT_BINARY ||
+                               symbol->value->type == TM32ASM_TT_OCTAL ||
+                               symbol->value->type == TM32ASM_TT_HEXADECIMAL)) {
+            repeatCount = (uint32_t)strtoul(symbol->value->lexeme, NULL, 0);
+        } else {
+            TM32ASM_LogError(".repeat/.rept directive count must be an integer or integer symbol at %s:%u",
+                             token->filename, token->line);
+            return false;
+        }
+    } else {
+        TM32ASM_LogError(".repeat/.rept directive count must be an integer or integer symbol at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    if (repeatCount == 0) {
+        TM32ASM_LogError(".repeat/.rept directive count must be greater than 0 at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Repeat count: %u", repeatCount);
+    
+    // Create a new token stream to collect the repeat body
+    TM32ASM_TokenStream* bodyStream = TM32ASM_CreateTokenStream();
+    if (bodyStream == NULL) {
+        TM32ASM_LogError("Failed to create token stream for repeat body");
+        return false;
+    }
+    
+    // Collect tokens until we find .endrepeat/.endr
+    uint32_t nestedRepeats = 0;
+    TM32ASM_Token* bodyToken;
+    
+    while ((bodyToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        if (bodyToken->type == TM32ASM_TT_DIRECTIVE) {
+            if (strcmp(bodyToken->lexeme, ".repeat") == 0 || strcmp(bodyToken->lexeme, ".rept") == 0) {
+                nestedRepeats++;
+            } else if (strcmp(bodyToken->lexeme, ".endrepeat") == 0 || strcmp(bodyToken->lexeme, ".endr") == 0) {
+                if (nestedRepeats == 0) {
+                    // This is our matching .endrepeat/.endr
+                    break;
+                }
+                nestedRepeats--;
+            }
+        }
+        
+        // Add token to body (create a copy to avoid double-free)
+        TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(bodyToken->lexeme, bodyToken->type);
+        if (tokenCopy == NULL) {
+            TM32ASM_LogError("Failed to create token copy for repeat body");
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+        tokenCopy->param = bodyToken->param;
+        tokenCopy->filename = bodyToken->filename;
+        tokenCopy->line = bodyToken->line;
+        
+        TM32ASM_InsertToken(bodyStream, tokenCopy);
+    }
+    
+    if (bodyToken == NULL) {
+        TM32ASM_LogError(".repeat/.rept directive without matching .endrepeat/.endr at %s:%u",
+                         token->filename, token->line);
+        TM32ASM_DestroyTokenStream(bodyStream);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Collected %zu tokens for repeat body", bodyStream->tokenCount);
+    
+    // Expand the repeat body the specified number of times
+    for (uint32_t i = 0; i < repeatCount; i++) {
+        // Reset the body stream's read pointer
+        bodyStream->tokenReadPointer = 0;
+        
+        // Process each token in the body and add to output
+        TM32ASM_Token* repeatToken;
+        while ((repeatToken = TM32ASM_ConsumeNextToken(bodyStream)) != NULL) {
+            // Create a copy of the token for the output stream
+            TM32ASM_Token* outputToken = TM32ASM_CreateToken(repeatToken->lexeme, repeatToken->type);
+            if (outputToken == NULL) {
+                TM32ASM_LogError("Failed to create token copy for repeat expansion");
+                TM32ASM_DestroyTokenStream(bodyStream);
+                return false;
+            }
+            outputToken->param = repeatToken->param;
+            outputToken->filename = repeatToken->filename;
+            outputToken->line = repeatToken->line;
+            
+            TM32ASM_InsertToken(outputStream, outputToken);
+        }
+    }
+    
+    TM32ASM_LogDebug("Expanded repeat body %u times", repeatCount);
+    
+    // Clean up the body stream
+    TM32ASM_DestroyTokenStream(bodyStream);
+    
+    return true;
+}
+
+static bool TM32ASM_HandleEndrepeatDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // This should not be reached if the repeat directive is handled correctly,
+    // but we need it for error checking
+    TM32ASM_LogError(".endrepeat/.endr directive without matching .repeat/.rept at %s:%u",
+                     token->filename, token->line);
+    return false;
+}
+
+/**
+ * @brief   Evaluates a condition token stream for while loops.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   condition      The condition token stream to evaluate.
+ * 
+ * @return  `true` if the condition evaluates to true, `false` otherwise.
+ */
+static bool TM32ASM_EvaluateCondition (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    condition
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(condition, false);
+    
+    // Reset the condition stream's read pointer
+    condition->tokenReadPointer = 0;
+    
+    // For simplicity, we'll implement basic condition evaluation
+    // This handles single symbol/literal comparisons
+    TM32ASM_Token* firstToken = TM32ASM_ConsumeNextToken(condition);
+    if (firstToken == NULL) {
+        return false; // Empty condition is false
+    }
+    
+    // If it's a numeric literal, check if it's non-zero
+    if (firstToken->type == TM32ASM_TT_DECIMAL ||
+        firstToken->type == TM32ASM_TT_BINARY ||
+        firstToken->type == TM32ASM_TT_OCTAL ||
+        firstToken->type == TM32ASM_TT_HEXADECIMAL) {
+        uint32_t value = (uint32_t)strtoul(firstToken->lexeme, NULL, 0);
+        return value != 0;
+    }
+    
+    // If it's an identifier, try to substitute with a symbol
+    if (firstToken->type == TM32ASM_TT_IDENTIFIER) {
+        TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, firstToken->lexeme);
+        if (symbol != NULL) {
+            // Recursively evaluate the symbol's value
+            TM32ASM_TokenStream* symbolStream = TM32ASM_CreateTokenStream();
+            if (symbolStream == NULL) {
+                return false;
+            }
+            
+            // Create a copy of the symbol's value token
+            TM32ASM_Token* symbolToken = TM32ASM_CreateToken(symbol->value->lexeme, symbol->value->type);
+            if (symbolToken == NULL) {
+                TM32ASM_DestroyTokenStream(symbolStream);
+                return false;
+            }
+            symbolToken->param = symbol->value->param;
+            symbolToken->filename = symbol->value->filename;
+            symbolToken->line = symbol->value->line;
+            
+            TM32ASM_InsertToken(symbolStream, symbolToken);
+            
+            bool result = TM32ASM_EvaluateCondition(preprocessor, symbolStream);
+            TM32ASM_DestroyTokenStream(symbolStream);
+            return result;
+        }
+    }
+    
+    // Default: unknown condition types are false
+    return false;
+}
+
+static bool TM32ASM_HandleWhileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .while directive at %s:%u", token->filename, token->line);
+    
+    // Create a token stream to collect the condition
+    TM32ASM_TokenStream* conditionStream = TM32ASM_CreateTokenStream();
+    if (conditionStream == NULL) {
+        TM32ASM_LogError("Failed to create token stream for while condition");
+        return false;
+    }
+    
+    // Collect condition tokens until end of line or start of body
+    TM32ASM_Token* conditionToken;
+    while ((conditionToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        // For simplicity, we'll stop at the next line or when we encounter certain tokens
+        // In a full implementation, this would be more sophisticated
+        if (conditionToken->line != token->line) {
+            // Put the token back and break
+            inputStream->tokenReadPointer--;
+            break;
+        }
+        
+        // Add token to condition (create a copy)
+        TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(conditionToken->lexeme, conditionToken->type);
+        if (tokenCopy == NULL) {
+            TM32ASM_LogError("Failed to create token copy for while condition");
+            TM32ASM_DestroyTokenStream(conditionStream);
+            return false;
+        }
+        tokenCopy->param = conditionToken->param;
+        tokenCopy->filename = conditionToken->filename;
+        tokenCopy->line = conditionToken->line;
+        
+        TM32ASM_InsertToken(conditionStream, tokenCopy);
+    }
+    
+    if (conditionStream->tokenCount == 0) {
+        TM32ASM_LogError(".while directive missing condition at %s:%u",
+                         token->filename, token->line);
+        TM32ASM_DestroyTokenStream(conditionStream);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Collected %zu tokens for while condition", conditionStream->tokenCount);
+    
+    // Create a new token stream to collect the while body
+    TM32ASM_TokenStream* bodyStream = TM32ASM_CreateTokenStream();
+    if (bodyStream == NULL) {
+        TM32ASM_LogError("Failed to create token stream for while body");
+        TM32ASM_DestroyTokenStream(conditionStream);
+        return false;
+    }
+    
+    // Collect tokens until we find .endwhile/.endw
+    uint32_t nestedWhiles = 0;
+    TM32ASM_Token* bodyToken;
+    
+    while ((bodyToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        if (bodyToken->type == TM32ASM_TT_DIRECTIVE) {
+            if (strcmp(bodyToken->lexeme, ".while") == 0) {
+                nestedWhiles++;
+            } else if (strcmp(bodyToken->lexeme, ".endwhile") == 0 || strcmp(bodyToken->lexeme, ".endw") == 0) {
+                if (nestedWhiles == 0) {
+                    // This is our matching .endwhile/.endw
+                    break;
+                }
+                nestedWhiles--;
+            }
+        }
+        
+        // Add token to body (create a copy)
+        TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(bodyToken->lexeme, bodyToken->type);
+        if (tokenCopy == NULL) {
+            TM32ASM_LogError("Failed to create token copy for while body");
+            TM32ASM_DestroyTokenStream(conditionStream);
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+        tokenCopy->param = bodyToken->param;
+        tokenCopy->filename = bodyToken->filename;
+        tokenCopy->line = bodyToken->line;
+        
+        TM32ASM_InsertToken(bodyStream, tokenCopy);
+    }
+    
+    if (bodyToken == NULL) {
+        TM32ASM_LogError(".while directive without matching .endwhile/.endw at %s:%u",
+                         token->filename, token->line);
+        TM32ASM_DestroyTokenStream(conditionStream);
+        TM32ASM_DestroyTokenStream(bodyStream);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Collected %zu tokens for while body", bodyStream->tokenCount);
+    
+    // Execute the while loop with safety limit
+    uint32_t iteration = 0;
+    while (iteration < MAX_WHILE_ITERATIONS) {
+        // Evaluate the condition
+        if (!TM32ASM_EvaluateCondition(preprocessor, conditionStream)) {
+            // Condition is false, exit loop
+            break;
+        }
+        
+        TM32ASM_LogDebug("While condition true, executing iteration %u", iteration);
+        
+        // Reset the body stream's read pointer
+        bodyStream->tokenReadPointer = 0;
+        
+        // Create a temporary output stream for this iteration
+        TM32ASM_TokenStream* iterationOutput = TM32ASM_CreateTokenStream();
+        if (iterationOutput == NULL) {
+            TM32ASM_LogError("Failed to create iteration output stream");
+            TM32ASM_DestroyTokenStream(conditionStream);
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+        
+        // Increment while count to maintain proper loop context during recursive processing
+        preprocessor->whileCount++;
+        
+        // Process the body tokens through the preprocessor to handle directives
+        bool processSuccess = TM32ASM_ProcessTokenStream(preprocessor, bodyStream, iterationOutput);
+        
+        // Decrement while count after processing
+        preprocessor->whileCount--;
+        
+        if (!processSuccess) {
+            TM32ASM_LogError("Failed to process while loop body tokens");
+            TM32ASM_DestroyTokenStream(conditionStream);
+            TM32ASM_DestroyTokenStream(bodyStream);
+            TM32ASM_DestroyTokenStream(iterationOutput);
+            return false;
+        }
+        
+        // Check for loop control directives
+        if (preprocessor->loopControl == TM32ASM_LOOP_CONTROL_BREAK) {
+            TM32ASM_LogDebug("While loop terminated early by .break directive");
+            preprocessor->loopControl = TM32ASM_LOOP_CONTROL_NONE; // Reset state
+            TM32ASM_DestroyTokenStream(iterationOutput);
+            break; // Exit the while loop
+        } else if (preprocessor->loopControl == TM32ASM_LOOP_CONTROL_CONTINUE) {
+            TM32ASM_LogDebug("While loop iteration skipped by .continue directive");
+            preprocessor->loopControl = TM32ASM_LOOP_CONTROL_NONE; // Reset state
+            TM32ASM_DestroyTokenStream(iterationOutput);
+            iteration++;
+            continue; // Skip to next iteration
+        }
+        
+        // Copy processed tokens to the main output stream
+        iterationOutput->tokenReadPointer = 0;
+        TM32ASM_Token* processedToken;
+        while ((processedToken = TM32ASM_ConsumeNextToken(iterationOutput)) != NULL) {
+            // Create a copy of the processed token
+            TM32ASM_Token* outputToken = TM32ASM_CreateToken(processedToken->lexeme, processedToken->type);
+            if (outputToken == NULL) {
+                TM32ASM_LogError("Failed to create token copy for while expansion");
+                TM32ASM_DestroyTokenStream(conditionStream);
+                TM32ASM_DestroyTokenStream(bodyStream);
+                TM32ASM_DestroyTokenStream(iterationOutput);
+                return false;
+            }
+            outputToken->param = processedToken->param;
+            outputToken->filename = processedToken->filename;
+            outputToken->line = processedToken->line;
+            
+            TM32ASM_InsertToken(outputStream, outputToken);
+        }
+        
+        // Clean up iteration output
+        TM32ASM_DestroyTokenStream(iterationOutput);
+        
+        iteration++;
+    }
+    
+    if (iteration >= MAX_WHILE_ITERATIONS) {
+        TM32ASM_LogError(".while loop exceeded maximum iterations (%u) at %s:%u - possible infinite loop",
+                         MAX_WHILE_ITERATIONS, token->filename, token->line);
+        TM32ASM_DestroyTokenStream(conditionStream);
+        TM32ASM_DestroyTokenStream(bodyStream);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("While loop completed after %u iterations", iteration);
+    
+    // Clean up the streams
+    TM32ASM_DestroyTokenStream(conditionStream);
+    TM32ASM_DestroyTokenStream(bodyStream);
+    
+    return true;
+}
+
+static bool TM32ASM_HandleEndwhileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // This should not be reached if the while directive is handled correctly,
+    // but we need it for error checking
+    TM32ASM_LogError(".endwhile/.endw directive without matching .while at %s:%u",
+                     token->filename, token->line);
+    return false;
+}
+
+static bool TM32ASM_HandleForDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .for directive at %s:%u", token->filename, token->line);
+    
+    // Expect syntax: .for variable start end [step]
+    TM32ASM_Token* varToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (varToken == NULL || varToken->type != TM32ASM_TT_IDENTIFIER) {
+        TM32ASM_LogError(".for directive missing variable name at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_Token* startToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (startToken == NULL || (startToken->type != TM32ASM_TT_DECIMAL && 
+                               startToken->type != TM32ASM_TT_HEXADECIMAL &&
+                               startToken->type != TM32ASM_TT_BINARY &&
+                               startToken->type != TM32ASM_TT_OCTAL)) {
+        TM32ASM_LogError(".for directive missing start value at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_Token* endToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (endToken == NULL || (endToken->type != TM32ASM_TT_DECIMAL && 
+                             endToken->type != TM32ASM_TT_HEXADECIMAL &&
+                             endToken->type != TM32ASM_TT_BINARY &&
+                             endToken->type != TM32ASM_TT_OCTAL)) {
+        TM32ASM_LogError(".for directive missing end value at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Optional step parameter (defaults to 1)
+    int32_t step = 1;
+    TM32ASM_Token* stepToken = TM32ASM_PeekNextToken(inputStream, 0);
+    if (stepToken != NULL && (stepToken->type == TM32ASM_TT_DECIMAL ||
+                              stepToken->type == TM32ASM_TT_HEXADECIMAL ||
+                              stepToken->type == TM32ASM_TT_BINARY ||
+                              stepToken->type == TM32ASM_TT_OCTAL)) {
+        TM32ASM_ConsumeNextToken(inputStream); // consume the step token
+        step = (int32_t)strtol(stepToken->lexeme, NULL, 0);
+        if (step == 0) {
+            TM32ASM_LogError(".for directive step cannot be zero at %s:%u",
+                             token->filename, token->line);
+            return false;
+        }
+    }
+    
+    // Create a token stream to collect the body
+    TM32ASM_TokenStream* bodyStream = TM32ASM_CreateTokenStream();
+    if (bodyStream == NULL) {
+        TM32ASM_LogError("Failed to create token stream for for loop body");
+        return false;
+    }
+    
+    // Collect body tokens until matching .endfor/.endf
+    TM32ASM_Token* bodyToken;
+    uint32_t nestedCount = 0;
+    
+    while ((bodyToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        if (strcmp(bodyToken->lexeme, ".for") == 0) {
+            nestedCount++;
+        } else if (strcmp(bodyToken->lexeme, ".endfor") == 0 || strcmp(bodyToken->lexeme, ".endf") == 0) {
+            if (nestedCount == 0) {
+                // This is our matching .endfor/.endf
+                break;
+            } else {
+                nestedCount--;
+            }
+        }
+        
+        // Create a copy of the token for the body stream
+        TM32ASM_Token* bodyCopy = TM32ASM_CreateToken(bodyToken->lexeme, bodyToken->type);
+        if (bodyCopy == NULL) {
+            TM32ASM_LogError("Failed to create token copy for for loop body");
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+        bodyCopy->param = bodyToken->param;
+        bodyCopy->filename = bodyToken->filename;
+        bodyCopy->line = bodyToken->line;
+        
+        if (!TM32ASM_InsertToken(bodyStream, bodyCopy)) {
+            TM32ASM_LogError("Failed to append token to for loop body");
+            TM32ASM_DestroyToken(bodyCopy);
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+    }
+    
+    if (bodyToken == NULL) {
+        TM32ASM_LogError(".for directive without matching .endfor/.endf at %s:%u",
+                         token->filename, token->line);
+        TM32ASM_DestroyTokenStream(bodyStream);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Collected %zu tokens for for loop body", bodyStream->tokenCount);
+    
+    // Create for loop state
+    if (preprocessor->forCount >= preprocessor->forCapacity) {
+        if (!TM32ASM_GrowArray((void**)&preprocessor->fors,
+                               &preprocessor->forCapacity,
+                               sizeof(TM32ASM_ForState))) {
+            TM32ASM_LogError("Failed to expand for loop stack");
+            TM32ASM_DestroyTokenStream(bodyStream);
+            return false;
+        }
+    }
+    
+    TM32ASM_ForState* forState = &preprocessor->fors[preprocessor->forCount++];
+    forState->body = bodyStream;
+    
+    // Copy variable name
+    forState->variable = TM32ASM_Create(strlen(varToken->lexeme) + 1, char);
+    if (forState->variable == NULL) {
+        TM32ASM_LogError("Failed to allocate memory for for loop variable name");
+        TM32ASM_DestroyTokenStream(bodyStream);
+        preprocessor->forCount--;
+        return false;
+    }
+    strcpy(forState->variable, varToken->lexeme);
+    
+    forState->start = (int32_t)strtol(startToken->lexeme, NULL, 0);
+    forState->end = (int32_t)strtol(endToken->lexeme, NULL, 0);
+    forState->step = step;
+    forState->current = forState->start;
+    forState->line = token->line;
+    forState->filename = token->filename;
+    
+    TM32ASM_LogDebug("For loop range: start=%d, end=%d, step=%d", 
+                     forState->start, forState->end, forState->step);
+    
+    // Execute the for loop
+    bool ascending = (step > 0);
+    while ((ascending && forState->current <= forState->end) ||
+           (!ascending && forState->current >= forState->end)) {
+        
+        TM32ASM_LogDebug("For loop iteration: %s = %d", forState->variable, forState->current);
+        
+        // Set the loop variable value
+        TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, forState->variable);
+        if (symbol != NULL) {
+            // Update existing symbol's value
+            TM32ASM_Destroy(symbol->value->lexeme);
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%d", forState->current);
+            symbol->value->lexeme = TM32ASM_Create(strlen(buffer) + 1, char);
+            if (symbol->value->lexeme != NULL) {
+                strcpy(symbol->value->lexeme, buffer);
+            }
+            symbol->value->param = forState->current;
+        } else {
+            // Create new symbol
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%d", forState->current);
+            TM32ASM_Token* valueToken = TM32ASM_CreateToken(buffer, TM32ASM_TT_DECIMAL);
+            if (valueToken == NULL) {
+                TM32ASM_LogError("Failed to create value token for for loop variable");
+                break;
+            }
+            valueToken->param = forState->current;
+            
+            if (!TM32ASM_DefineSymbol(preprocessor, forState->variable, valueToken, false,
+                                      forState->filename, forState->line)) {
+                TM32ASM_LogError("Failed to define for loop variable");
+                TM32ASM_DestroyToken(valueToken);
+                break;
+            }
+        }
+        
+        // Process the body
+        bodyStream->tokenReadPointer = 0; // Reset read pointer
+        
+        // Increment for count to maintain proper loop context during recursive processing
+        preprocessor->forCount++;
+        
+        bool processSuccess = TM32ASM_ProcessTokenStream(preprocessor, bodyStream, outputStream);
+        
+        // Decrement for count after processing
+        preprocessor->forCount--;
+        
+        if (!processSuccess) {
+            TM32ASM_LogError("Failed to process for loop body");
+            break;
+        }
+        
+        // Check for loop control directives
+        if (preprocessor->loopControl == TM32ASM_LOOP_CONTROL_BREAK) {
+            TM32ASM_LogDebug("For loop terminated early by .break directive");
+            preprocessor->loopControl = TM32ASM_LOOP_CONTROL_NONE; // Reset state
+            break; // Exit the for loop
+        } else if (preprocessor->loopControl == TM32ASM_LOOP_CONTROL_CONTINUE) {
+            TM32ASM_LogDebug("For loop iteration skipped by .continue directive");
+            preprocessor->loopControl = TM32ASM_LOOP_CONTROL_NONE; // Reset state
+            // Continue to next iteration (increment happens below)
+        }
+        
+        // Increment/decrement the current value
+        forState->current += step;
+    }
+    
+    // Clean up
+    preprocessor->forCount--;
+    TM32ASM_DestroyTokenStream(forState->body);
+    TM32ASM_Destroy(forState->variable);
+    
+    TM32ASM_LogDebug("For loop completed");
+    return true;
+}
+
+static bool TM32ASM_HandleEndforDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // This should not be reached if the for directive is handled correctly,
+    // but we need it for error checking
+    TM32ASM_LogError(".endfor/.endf directive without matching .for at %s:%u",
+                     token->filename, token->line);
+    return false;
+}
+
+static bool TM32ASM_HandleContinueDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Check if we're inside a loop (while or for)
+    if (preprocessor->whileCount == 0 && preprocessor->forCount == 0) {
+        TM32ASM_LogError(".continue directive outside of any loop at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug(".continue directive encountered at %s:%u", token->filename, token->line);
+    
+    // Set the loop control state to continue
+    preprocessor->loopControl = TM32ASM_LOOP_CONTROL_CONTINUE;
+    
+    return true;
+}
+
+static bool TM32ASM_HandleBreakDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Check if we're inside a loop (while or for)
+    if (preprocessor->whileCount == 0 && preprocessor->forCount == 0) {
+        TM32ASM_LogError(".break directive outside of any loop at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug(".break directive encountered at %s:%u", token->filename, token->line);
+    
+    // Set the loop control state to break
+    preprocessor->loopControl = TM32ASM_LOOP_CONTROL_BREAK;
+    
+    return true;
+}
+
+static bool TM32ASM_HandleWarnDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Collect all remaining tokens on the line as the warning message
+    TM32ASM_Token* messageToken;
+    char messageBuffer[4096] = {0}; // Buffer for concatenated message
+    size_t messageLen = 0;
+    
+    while ((messageToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        // Stop at end of line or if we encounter another directive
+        if (messageToken->type == TM32ASM_TT_DIRECTIVE) {
+            // Put the directive token back for later processing
+            inputStream->tokenReadPointer--;
+            break;
+        }
+        
+        // Append token to message (with space separator)
+        if (messageLen > 0 && messageLen < sizeof(messageBuffer) - 2) {
+            messageBuffer[messageLen++] = ' ';
+        }
+        
+        size_t tokenLen = strlen(messageToken->lexeme);
+        if (messageLen + tokenLen < sizeof(messageBuffer) - 1) {
+            strcpy(messageBuffer + messageLen, messageToken->lexeme);
+            messageLen += tokenLen;
+        }
+    }
+    
+    // Emit the warning
+    if (messageLen > 0) {
+        TM32ASM_LogWarn("User warning at %s:%u: %s", token->filename, token->line, messageBuffer);
+    } else {
+        TM32ASM_LogWarn("User warning at %s:%u", token->filename, token->line);
+    }
+    
+    return true;
+}
+
+static bool TM32ASM_HandleErrorDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Collect all remaining tokens on the line as the error message
+    TM32ASM_Token* messageToken;
+    char messageBuffer[4096] = {0}; // Buffer for concatenated message
+    size_t messageLen = 0;
+    
+    while ((messageToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        // Stop at end of line or if we encounter another directive
+        if (messageToken->type == TM32ASM_TT_DIRECTIVE) {
+            // Put the directive token back for later processing
+            inputStream->tokenReadPointer--;
+            break;
+        }
+        
+        // Append token to message (with space separator)
+        if (messageLen > 0 && messageLen < sizeof(messageBuffer) - 2) {
+            messageBuffer[messageLen++] = ' ';
+        }
+        
+        size_t tokenLen = strlen(messageToken->lexeme);
+        if (messageLen + tokenLen < sizeof(messageBuffer) - 1) {
+            strcpy(messageBuffer + messageLen, messageToken->lexeme);
+            messageLen += tokenLen;
+        }
+    }
+    
+    // Emit the error and halt assembly
+    if (messageLen > 0) {
+        TM32ASM_LogError("User error at %s:%u: %s", token->filename, token->line, messageBuffer);
+    } else {
+        TM32ASM_LogError("User error at %s:%u", token->filename, token->line);
+    }
+    
+    return false; // Return false to halt assembly
+}
+
+static bool TM32ASM_HandleAssertDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Get the condition expression - for now, we'll do a simple check
+    // A full implementation would evaluate the expression properly
+    TM32ASM_Token* conditionToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (conditionToken == NULL) {
+        TM32ASM_LogError("Expected condition after .assert directive at %s:%u", token->filename, token->line);
+        return false;
+    }
+    
+    // For now, implement a simple assertion that checks if a symbol is defined and non-zero
+    bool assertionPassed = false;
+    
+    if (conditionToken->type == TM32ASM_TT_IDENTIFIER) {
+        TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, conditionToken->lexeme);
+        if (symbol != NULL && symbol->value != NULL) {
+            if (symbol->value->type == TM32ASM_TT_DECIMAL ||
+                symbol->value->type == TM32ASM_TT_HEXADECIMAL ||
+                symbol->value->type == TM32ASM_TT_BINARY ||
+                symbol->value->type == TM32ASM_TT_OCTAL) {
+                uint32_t value = TM32ASM_GetIntegerLexeme(symbol->value);
+                assertionPassed = (value != 0);
+            }
+        }
+    } else if (conditionToken->type == TM32ASM_TT_DECIMAL ||
+               conditionToken->type == TM32ASM_TT_HEXADECIMAL ||
+               conditionToken->type == TM32ASM_TT_BINARY ||
+               conditionToken->type == TM32ASM_TT_OCTAL) {
+        // Parse the numeric value using proper function
+        uint32_t value = TM32ASM_GetIntegerLexeme(conditionToken);
+        assertionPassed = (value != 0);
+    } else {
+        // For other token types, assume true for now
+        assertionPassed = true;
+    }
+    
+    // Collect optional message
+    TM32ASM_Token* messageToken;
+    char messageBuffer[4096] = {0};
+    size_t messageLen = 0;
+    
+    while ((messageToken = TM32ASM_ConsumeNextToken(inputStream)) != NULL) {
+        if (messageToken->type == TM32ASM_TT_DIRECTIVE) {
+            inputStream->tokenReadPointer--;
+            break;
+        }
+        
+        if (messageLen > 0 && messageLen < sizeof(messageBuffer) - 2) {
+            messageBuffer[messageLen++] = ' ';
+        }
+        
+        size_t tokenLen = strlen(messageToken->lexeme);
+        if (messageLen + tokenLen < sizeof(messageBuffer) - 1) {
+            strcpy(messageBuffer + messageLen, messageToken->lexeme);
+            messageLen += tokenLen;
+        }
+    }
+    
+    if (!assertionPassed) {
+        if (messageLen > 0) {
+            TM32ASM_LogError("Assertion failed at %s:%u: %s", token->filename, token->line, messageBuffer);
+        } else {
+            TM32ASM_LogError("Assertion failed at %s:%u: %s", token->filename, token->line, conditionToken->lexeme);
+        }
+        return false; // Halt assembly on assertion failure
+    }
+    
+    TM32ASM_LogDebug("Assertion passed at %s:%u", token->filename, token->line);
+    return true;
+}
+
+static bool TM32ASM_HandleFileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Get the filename token
+    TM32ASM_Token* filenameToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (filenameToken == NULL) {
+        TM32ASM_LogError("Expected filename after .file directive at %s:%u", token->filename, token->line);
+        return false;
+    }
+    
+    // Clean up existing debug filename
+    if (preprocessor->debugFilename != NULL) {
+        TM32ASM_Destroy(preprocessor->debugFilename);
+    }
+    
+    // Set new debug filename (remove quotes if present)
+    const char* filename = filenameToken->lexeme;
+    if (filename[0] == '"' && filename[strlen(filename) - 1] == '"') {
+        // Remove quotes
+        size_t len = strlen(filename) - 2;
+        preprocessor->debugFilename = TM32ASM_Create(len + 1, char);
+        if (preprocessor->debugFilename != NULL) {
+            strncpy(preprocessor->debugFilename, filename + 1, len);
+            preprocessor->debugFilename[len] = '\0';
+        }
+    } else {
+        // Use filename as-is
+        size_t len = strlen(filename);
+        preprocessor->debugFilename = TM32ASM_Create(len + 1, char);
+        if (preprocessor->debugFilename != NULL) {
+            strcpy(preprocessor->debugFilename, filename);
+        }
+    }
+    
+    if (preprocessor->debugFilename == NULL) {
+        TM32ASM_LogError("Failed to allocate memory for debug filename at %s:%u", token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Set debug filename to '%s' at %s:%u", preprocessor->debugFilename, token->filename, token->line);
+    return true;
+}
+
+static bool TM32ASM_HandleLineDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    // Get the line number token
+    TM32ASM_Token* lineToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (lineToken == NULL) {
+        TM32ASM_LogError("Expected line number after .line directive at %s:%u", token->filename, token->line);
+        return false;
+    }
+    
+    // Parse line number
+    if (lineToken->type != TM32ASM_TT_DECIMAL) {
+        TM32ASM_LogError("Expected numeric line number after .line directive at %s:%u, got %s", 
+                         token->filename, token->line, lineToken->lexeme);
+        return false;
+    }
+    
+    uint32_t lineNumber = (uint32_t)strtol(lineToken->lexeme, NULL, 0);
+    preprocessor->debugLine = lineNumber;
+    
+    TM32ASM_LogDebug("Set debug line number to %u at %s:%u", lineNumber, token->filename, token->line);
     return true;
 }

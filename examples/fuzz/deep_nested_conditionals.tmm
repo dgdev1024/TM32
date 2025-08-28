@@ -1,0 +1,22 @@
+; Edge case: Maximum nesting depth for conditionals
+.if 1
+  .if 1
+    .if 1
+      .if 1
+        .if 1
+          .if 1
+            .if 1
+              .if 1
+                .if 1
+                  .if 1
+                    mv b, a
+                  .endif
+                .endif
+              .endif
+            .endif
+          .endif
+        .endif
+      .endif
+    .endif
+  .endif
+.endif

@@ -40,6 +40,13 @@ static const TM32ASM_Token KEYWORD_LOOKUP[] = {
     { ".for",           TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_FOR,         NULL, 0 },
     { ".endfor",        TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDFOR,      NULL, 0 },
     { ".endf",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDFOR,      NULL, 0 },
+    { ".continue",      TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_CONTINUE,    NULL, 0 },
+    { ".break",         TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_BREAK,       NULL, 0 },
+    { ".warn",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_WARN,        NULL, 0 },
+    { ".error",         TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ERROR,       NULL, 0 },
+    { ".assert",        TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ASSERT,      NULL, 0 },
+    { ".file",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_FILE,        NULL, 0 },
+    { ".line",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_LINE,        NULL, 0 },
     
     // Assembler Directives
     { ".metadata",      TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_METADATA,    NULL, 0 },

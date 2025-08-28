@@ -14,6 +14,18 @@
 #include <tm32asm_token.h>
 #include <tm32asm_token_stream.h>
 
+/* Public Enumerations ********************************************************/
+
+/**
+ * @brief   Loop control flow states for .continue and .break directives.
+ */
+typedef enum
+{
+    TM32ASM_LOOP_CONTROL_NONE = 0,      /** @brief No loop control action */
+    TM32ASM_LOOP_CONTROL_CONTINUE,      /** @brief Continue to next iteration */
+    TM32ASM_LOOP_CONTROL_BREAK          /** @brief Break out of current loop */
+} TM32ASM_LoopControlState;
+
 /* Public Structures **********************************************************/
 
 /**
@@ -54,6 +66,46 @@ typedef struct
 } TM32ASM_ConditionalState;
 
 /**
+ * @brief   Represents a repetition block state.
+ */
+typedef struct
+{
+    TM32ASM_TokenStream* body;          /** @brief Token stream containing repeat body */
+    uint32_t            repeatCount;    /** @brief Total number of repetitions */
+    uint32_t            currentIteration; /** @brief Current iteration (0-based) */
+    uint32_t            line;           /** @brief Line where repeat started */
+    const char*         filename;       /** @brief File where repeat started */
+} TM32ASM_RepeatState;
+
+/**
+ * @brief   Represents a while loop block state.
+ */
+typedef struct
+{
+    TM32ASM_TokenStream* body;          /** @brief Token stream containing while body */
+    TM32ASM_TokenStream* condition;     /** @brief Token stream containing condition expression */
+    uint32_t            maxIterations;  /** @brief Maximum allowed iterations (safety limit) */
+    uint32_t            currentIteration; /** @brief Current iteration count */
+    uint32_t            line;           /** @brief Line where while started */
+    const char*         filename;       /** @brief File where while started */
+} TM32ASM_WhileState;
+
+/**
+ * @brief   Represents a for loop block state.
+ */
+typedef struct
+{
+    TM32ASM_TokenStream* body;          /** @brief Token stream containing for loop body */
+    char*               variable;       /** @brief Name of the loop variable */
+    int32_t             start;          /** @brief Starting value */
+    int32_t             end;            /** @brief Ending value (inclusive) */
+    int32_t             step;           /** @brief Step value (default 1) */
+    int32_t             current;        /** @brief Current value of loop variable */
+    uint32_t            line;           /** @brief Line where for loop started */
+    const char*         filename;       /** @brief File where for loop started */
+} TM32ASM_ForState;
+
+/**
  * @brief   Represents the state and context of the TM32 Assembler Tool's
  *          preprocessor as it processes preprocessor directives to mutate the
  *          token stream produced by the lexer.
@@ -81,6 +133,24 @@ typedef struct
     uint32_t            conditionalCount;    /** @brief Number of active conditionals */
     uint32_t            conditionalCapacity; /** @brief Capacity of conditionals stack */
     
+    // Repetition stack
+    TM32ASM_RepeatState* repeats;        /** @brief Stack of repeat states */
+    uint32_t            repeatCount;     /** @brief Number of active repeats */
+    uint32_t            repeatCapacity;  /** @brief Capacity of repeats stack */
+    
+    // While loop stack
+    TM32ASM_WhileState* whiles;          /** @brief Stack of while loop states */
+    uint32_t            whileCount;      /** @brief Number of active while loops */
+    uint32_t            whileCapacity;   /** @brief Capacity of while loop stack */
+    
+    // For loop stack
+    TM32ASM_ForState*   fors;            /** @brief Stack of for loop states */
+    uint32_t            forCount;        /** @brief Number of active for loops */
+    uint32_t            forCapacity;     /** @brief Capacity of for loop stack */
+    
+    // Loop control flow state
+    TM32ASM_LoopControlState loopControl; /** @brief Current loop control state (.continue/.break) */
+    
     // Include path stack for error reporting
     const char**        includeStack;   /** @brief Stack of included file names */
     uint32_t            includeDepth;   /** @brief Current include depth */
@@ -100,6 +170,10 @@ typedef struct
     bool                processingActive; /** @brief Whether preprocessor is currently active */
     uint32_t            macroDepth;     /** @brief Current macro expansion depth */
     uint32_t            maxMacroDepth;  /** @brief Maximum allowed macro expansion depth */
+    
+    // Debug information state
+    char*               debugFilename;  /** @brief Current debug filename for .file/.line directives */
+    uint32_t            debugLine;      /** @brief Current debug line number for .line directive */
 
 } TM32ASM_Preprocessor;
 

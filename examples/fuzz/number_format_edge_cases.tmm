@@ -1,0 +1,28 @@
+; Edge case: Number format parsing edge cases
+.let hex_lowercase = 0xabcdef
+.let hex_uppercase = 0XABCDEF
+.let hex_mixed = 0xAbCdEf
+
+.let binary_all_ones = 0b11111111111111111111111111111111
+.let binary_all_zeros = 0b00000000000000000000000000000000
+.let binary_alternating = 0b10101010101010101010101010101010
+
+.let octal_max = 0o37777777777
+.let octal_zero = 0o0
+.let octal_mixed = 0o12345670
+
+; Edge cases with decimal
+.let decimal_zero = 0
+.let decimal_max_int = 2147483647
+.let decimal_overflow = 2147483648
+
+; Invalid number formats (should error)
+.let invalid_hex = 0xGHIJ
+.let invalid_binary = 0b12345
+.let invalid_octal = 0o89ABC
+.let invalid_decimal = 123abc
+
+; Empty number tokens
+.let empty_hex = 0x
+.let empty_binary = 0b
+.let empty_octal = 0o
