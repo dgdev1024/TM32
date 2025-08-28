@@ -1,23 +1,61 @@
-; Test file demonstrating TM32 Assembler Preprocessor functionality
-; This file shows the basic preprocessing capabilities that have been implemented
+; Comprehensive Preprocessor Test
+; This file demonstrates the underlying preprocessor functionality
 
-; The following would be handled by the preprocessor when directive processing is added:
-; .const MAX_VALUE = 100
-; .let counter = 0
-; .define SQUARE(x) ((x) * (x))
+; Test symbol table functionality with constants
+.const BUFFER_SIZE = 1024
+.const MAX_ITERATIONS = 100
+.const DEBUG_MODE = 1
 
-; For now, test basic symbol substitution manually
-TEST_CONSTANT = 42
-variable_name = 16
+; Test variable definitions  
+.let counter = 0
+.let current_pos = BUFFER_SIZE
 
-; Test various token types
-add a, TEST_CONSTANT    ; Should substitute TEST_CONSTANT with 42
-mov bw, variable_name   ; Should substitute variable_name with 16
-ld ch, 0xFF             ; Regular hex literal
-sub dl, 0b1010          ; Binary literal
+; Test include stack (will be processed by preprocessor)
+; .include "common_macros.inc"
 
-; Test operators and expressions
-result = TEST_CONSTANT + variable_name
+; Test conditional compilation preparation
+.if DEBUG_MODE
+    ; Debug-specific code
+    .const LOG_LEVEL = 3
+.else
+    ; Release-specific code  
+    .const LOG_LEVEL = 1
+.endif
+
+; Test macro definition preparation
+.macro SAVE_REGISTERS
+    push a
+    push b
+    push c
+    push d
+.endmacro
+
+.macro RESTORE_REGISTERS
+    pop d
+    pop c  
+    pop b
+    pop a
+.endmacro
+
+; Test macro invocation with parameters
+.macro ADD_IMMEDIATE reg, value
+    ld a, reg
+    add a, value
+    ld reg, a
+.endmacro
+
+.text
+start:
+    ; Use defined symbols
+    ld a, BUFFER_SIZE
+    ld b, counter
+    
+    ; Use macro (will be expanded by preprocessor)
+    SAVE_REGISTERS
+    ADD_IMMEDIATE b, 10
+    RESTORE_REGISTERS
+    
+    halt
 mask = 0xFF & 0x0F
 shifted = 1 << 8
 

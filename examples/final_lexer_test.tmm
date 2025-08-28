@@ -1,5 +1,7 @@
 ; Final Comprehensive Lexer Test
 ; Testing all operator types including three-character assignment operators
+;
+; Note: This file is only meant to be lexed!
 
 .data
 value: .dd 100

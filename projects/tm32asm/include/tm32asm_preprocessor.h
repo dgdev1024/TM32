@@ -23,7 +23,7 @@ typedef struct
 {
     char*               name;           /** @brief Symbol name */
     TM32ASM_Token*      value;          /** @brief Token representing the symbol's value */
-    bool                is_constant;    /** @brief Whether the symbol is constant (immutable) */
+    bool                isConstant;     /** @brief Whether the symbol is constant (immutable) */
     uint32_t            line;           /** @brief Line where symbol was defined */
     const char*         filename;       /** @brief File where symbol was defined */
 } TM32ASM_Symbol;
@@ -35,7 +35,7 @@ typedef struct
 {
     char*               name;           /** @brief Macro name */
     char**              parameters;     /** @brief Parameter names */
-    uint32_t            param_count;    /** @brief Number of parameters */
+    uint32_t            paramCount;     /** @brief Number of parameters */
     TM32ASM_TokenStream* body;          /** @brief Token stream containing macro body */
     uint32_t            line;           /** @brief Line where macro was defined */
     const char*         filename;       /** @brief File where macro was defined */
@@ -48,7 +48,7 @@ typedef struct
 {
     bool                active;         /** @brief Whether this conditional block is active */
     bool                taken;          /** @brief Whether any branch has been taken */
-    bool                in_else;        /** @brief Whether we're in an else block */
+    bool                inElse;         /** @brief Whether we're in an else block */
     uint32_t            line;           /** @brief Line where conditional started */
     const char*         filename;       /** @brief File where conditional started */
 } TM32ASM_ConditionalState;
@@ -68,28 +68,38 @@ typedef struct
 {
     // Symbol table for variables and constants
     TM32ASM_Symbol*     symbols;        /** @brief Dynamic array of symbols */
-    uint32_t            symbol_count;   /** @brief Number of symbols */
-    uint32_t            symbol_capacity; /** @brief Capacity of symbols array */
+    uint32_t            symbolCount;    /** @brief Number of symbols */
+    uint32_t            symbolCapacity; /** @brief Capacity of symbols array */
     
     // Macro table
     TM32ASM_Macro*      macros;         /** @brief Dynamic array of macros */
-    uint32_t            macro_count;    /** @brief Number of macros */
-    uint32_t            macro_capacity; /** @brief Capacity of macros array */
+    uint32_t            macroCount;     /** @brief Number of macros */
+    uint32_t            macroCapacity;  /** @brief Capacity of macros array */
     
     // Conditional stack
     TM32ASM_ConditionalState* conditionals; /** @brief Stack of conditional states */
-    uint32_t            conditional_count;   /** @brief Number of active conditionals */
-    uint32_t            conditional_capacity; /** @brief Capacity of conditionals stack */
+    uint32_t            conditionalCount;    /** @brief Number of active conditionals */
+    uint32_t            conditionalCapacity; /** @brief Capacity of conditionals stack */
     
     // Include path stack for error reporting
-    const char**        include_stack;  /** @brief Stack of included file names */
-    uint32_t            include_depth;  /** @brief Current include depth */
-    uint32_t            include_capacity; /** @brief Capacity of include stack */
+    const char**        includeStack;   /** @brief Stack of included file names */
+    uint32_t            includeDepth;   /** @brief Current include depth */
+    uint32_t            includeCapacity; /** @brief Capacity of include stack */
+    
+    // Include search paths
+    const char**        includePaths;   /** @brief Array of include search directories */
+    uint32_t            includePathCount; /** @brief Number of include paths */
+    uint32_t            includePathCapacity; /** @brief Capacity of include paths array */
+    
+    // Included files tracking (to prevent circular includes)
+    const char**        includedFiles;  /** @brief Array of already included files */
+    uint32_t            includedFileCount; /** @brief Number of included files */
+    uint32_t            includedFileCapacity; /** @brief Capacity of included files array */
     
     // Processing state
-    bool                processing_active; /** @brief Whether preprocessor is currently active */
-    uint32_t            macro_depth;    /** @brief Current macro expansion depth */
-    uint32_t            max_macro_depth; /** @brief Maximum allowed macro expansion depth */
+    bool                processingActive; /** @brief Whether preprocessor is currently active */
+    uint32_t            macroDepth;     /** @brief Current macro expansion depth */
+    uint32_t            maxMacroDepth;  /** @brief Maximum allowed macro expansion depth */
 
 } TM32ASM_Preprocessor;
 
@@ -118,15 +128,58 @@ void TM32ASM_DestroyPreprocessor (
  *          and transformations.
  * 
  * @param   preprocessor    The preprocessor instance to use.
- * @param   input_stream    The input token stream to process.
- * @param   output_stream   The output token stream to write processed tokens to.
+ * @param   inputStream    The input token stream to process.
+ * @param   outputStream   The output token stream to write processed tokens to.
  * 
  * @return  `true` if preprocessing was successful, `false` if errors occurred.
  */
 bool TM32ASM_ProcessTokenStream (
     TM32ASM_Preprocessor*   preprocessor,
-    TM32ASM_TokenStream*    input_stream,
-    TM32ASM_TokenStream*    output_stream
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream
+);
+
+/**
+ * @brief   Processes a token stream through the preprocessor and returns a new
+ *          processed token stream.
+ * 
+ * @param   preprocessor    The preprocessor instance to use.
+ * @param   inputStream    The input token stream to process.
+ * 
+ * @return  A new token stream containing the processed tokens, or `NULL` on error.
+ */
+TM32ASM_TokenStream* TM32ASM_ProcessTokens (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream
+);
+
+/**
+ * @brief   Adds an include search path to the preprocessor.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   path            The directory path to add for include file searching.
+ * 
+ * @return  `true` if the path was added successfully, `false` on error.
+ */
+bool TM32ASM_AddIncludePath (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             path
+);
+
+/**
+ * @brief   Searches for an include file in the current directory and include paths.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   filename        The filename to search for.
+ * @param   currentFile    The current file being processed (for relative searches).
+ * 
+ * @return  The full path to the found file, or `NULL` if not found.
+ *          The returned string must be freed by the caller.
+ */
+char* TM32ASM_FindIncludeFile (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             filename,
+    const char*             currentFile
 );
 
 /**
@@ -135,7 +188,7 @@ bool TM32ASM_ProcessTokenStream (
  * @param   preprocessor    The preprocessor instance.
  * @param   name            The symbol name.
  * @param   value           The token representing the symbol's value.
- * @param   is_constant     Whether the symbol is constant (immutable).
+ * @param   isConstant     Whether the symbol is constant (immutable).
  * @param   filename        The file where the symbol is defined.
  * @param   line            The line where the symbol is defined.
  * 
@@ -145,7 +198,7 @@ bool TM32ASM_DefineSymbol (
     TM32ASM_Preprocessor*   preprocessor,
     const char*             name,
     TM32ASM_Token*          value,
-    bool                    is_constant,
+    bool                    isConstant,
     const char*             filename,
     uint32_t                line
 );
@@ -169,7 +222,7 @@ TM32ASM_Symbol* TM32ASM_LookupSymbol (
  * @param   preprocessor    The preprocessor instance.
  * @param   name            The macro name.
  * @param   parameters      Array of parameter names.
- * @param   param_count     Number of parameters.
+ * @param   paramCount     Number of parameters.
  * @param   body            Token stream containing the macro body.
  * @param   filename        The file where the macro is defined.
  * @param   line            The line where the macro is defined.
@@ -180,7 +233,7 @@ bool TM32ASM_DefineMacro (
     TM32ASM_Preprocessor*   preprocessor,
     const char*             name,
     char**                  parameters,
-    uint32_t                param_count,
+    uint32_t                paramCount,
     TM32ASM_TokenStream*    body,
     const char*             filename,
     uint32_t                line

@@ -148,9 +148,10 @@ assembler. The following preprocessor directives are supported:
 - `.repeat <count>`, `.rept <count>`: Begins a repetition block that will repeat
     the enclosed code `<count>` times. The repetition block ends with the
     `.endrepeat` or `.endr` directive.
-    - The `<count>` must be a non-negative, non-zero integer. If `<count>` is zero,
-        the block will be skipped entirely. If `<count>` is negative, an error
-        will be raised during the assembly process.
+    - The `<count>` must be a non-negative, non-zero integer, or an expression 
+        which evaluates to one. If `<count>` is zero, the block will be skipped 
+        entirely. If `<count>` is negative, an error will be raised during the 
+        assembly process.
     - Nested repetition blocks are supported, and encouraged for complex code
         generation patterns.
 - `.while <condition>`: Begins a while loop block that will repeat the enclosed
@@ -169,8 +170,8 @@ assembler. The following preprocessor directives are supported:
     will repeat the enclosed code with the variable `<var>` taking on values
     from `<start>` to `<end>`, incrementing by `<step>` each iteration. The
     for loop block ends with the `.endfor` or `.endf` directive.
-    - The `<start>`, `<end>`, and optional `<step>` must be integers. If `<step>`
-        is not provided, it defaults to `1`.
+    - The `<start>`, `<end>`, and optional `<step>` must be integers, or expressions
+        which evaluate to integers. If `<step>` is not provided, it defaults to `1`.
     - If `<step>` is negative, the loop will decrement `<var>` each iteration.
     - If `<start>` is greater than `<end>` and `<step>` is positive, or if
         `<start>` is less than `<end>` and `<step>` is negative, the loop will

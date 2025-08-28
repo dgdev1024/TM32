@@ -60,3 +60,4 @@ Makefile
 assets/
 .vscode/
 scratch/
+test_*
