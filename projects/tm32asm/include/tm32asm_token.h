@@ -103,6 +103,7 @@ typedef enum
     TM32ASM_TT_COMMA,                   /** @brief Punctuation Token (`,`) */
     TM32ASM_TT_COLON,                   /** @brief Punctuation Token (`:`) */
     TM32ASM_TT_AT,                      /** @brief Punctuation Token (`@@`) */
+    TM32ASM_TT_QUESTION,                /** @brief Punctuation Token (`?`) */
     
 } TM32ASM_TokenType;
 

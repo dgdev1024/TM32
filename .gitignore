@@ -61,3 +61,9 @@ assets/
 .vscode/
 scratch/
 test_*
+examples/test
+*.log
+
+# All `.md` files, except `README.md`
+*.md
+!README.md

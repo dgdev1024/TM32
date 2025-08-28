@@ -111,6 +111,108 @@ static bool TM32ASM_HandleIncludeDirective (
 );
 
 /**
+ * @brief   Handles the .let directive to define mutable variables.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .let directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleLetDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .const directive to define immutable constants.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .const directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleConstDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .if directive for conditional assembly.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .if directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleIfDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .elseif/.elif directive for conditional assembly.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .elseif/.elif directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleElseifDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .else directive for conditional assembly.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .else directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleElseDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
+ * @brief   Handles the .endif/.endc directive for conditional assembly.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   inputStream    The input token stream.
+ * @param   outputStream   The output token stream.
+ * @param   token           The .endif/.endc directive token.
+ * 
+ * @return  `true` if processing was successful, `false` if errors occurred.
+ */
+static bool TM32ASM_HandleEndifDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+);
+
+/**
  * @brief   Handles symbol substitution for identifier tokens.
  * 
  * @param   preprocessor    The preprocessor instance.
@@ -613,7 +715,7 @@ static bool TM32ASM_ProcessToken (
     TM32ASM_Token*          token
 )
 {
-    // Handle directive tokens
+    // Handle directive tokens (always process directives as they control conditional state)
     if (token->type == TM32ASM_TT_DIRECTIVE) {
         return TM32ASM_HandleDirective(preprocessor, inputStream, outputStream, token);
     }
@@ -628,8 +730,17 @@ static bool TM32ASM_ProcessToken (
         return TM32ASM_HandleSymbolSubstitution(preprocessor, outputStream, token);
     }
     
-    // Pass through all other tokens
-    TM32ASM_InsertToken(outputStream, token);
+    // Pass through all other tokens - create a copy to avoid double-free
+    TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(token->lexeme, token->type);
+    if (tokenCopy == NULL) {
+        TM32ASM_LogError("Failed to create token copy");
+        return false;
+    }
+    tokenCopy->param = token->param;
+    tokenCopy->filename = token->filename;
+    tokenCopy->line = token->line;
+    
+    TM32ASM_InsertToken(outputStream, tokenCopy);
     return true;
 }
 
@@ -851,14 +962,43 @@ static bool TM32ASM_HandleDirective (
     TM32ASM_Token*          token
 )
 {
+    // Conditional directives are always processed (they control processing state)
+    if (strcmp(token->lexeme, ".if") == 0) {
+        return TM32ASM_HandleIfDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".elseif") == 0 || strcmp(token->lexeme, ".elif") == 0) {
+        return TM32ASM_HandleElseifDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".else") == 0) {
+        return TM32ASM_HandleElseDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".endif") == 0 || strcmp(token->lexeme, ".endc") == 0) {
+        return TM32ASM_HandleEndifDirective(preprocessor, inputStream, outputStream, token);
+    }
+    
+    // Other directives are only processed if we're in an active context
+    if (!TM32ASM_ShouldProcessTokens(preprocessor)) {
+        return true; // Skip processing but don't error
+    }
+    
     // Check for specific directives
     if (strcmp(token->lexeme, ".include") == 0) {
         return TM32ASM_HandleIncludeDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".let") == 0) {
+        return TM32ASM_HandleLetDirective(preprocessor, inputStream, outputStream, token);
+    } else if (strcmp(token->lexeme, ".const") == 0) {
+        return TM32ASM_HandleConstDirective(preprocessor, inputStream, outputStream, token);
     }
     
     // For other directives, just pass through for now
     // (will be implemented in subsequent prompts)
-    TM32ASM_InsertToken(outputStream, token);
+    TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(token->lexeme, token->type);
+    if (tokenCopy == NULL) {
+        TM32ASM_LogError("Failed to create token copy for directive");
+        return false;
+    }
+    tokenCopy->param = token->param;
+    tokenCopy->filename = token->filename;
+    tokenCopy->line = token->line;
+    
+    TM32ASM_InsertToken(outputStream, tokenCopy);
     return true;
 }
 
@@ -887,8 +1027,17 @@ static bool TM32ASM_HandleSymbolSubstitution (
         TM32ASM_LogDebug("Substituted symbol '%s' with value '%s'", 
                          symbol->name, symbol->value->lexeme);
     } else {
-        // Not a symbol, pass through as-is
-        TM32ASM_InsertToken(outputStream, token);
+        // Not a symbol, pass through as-is - create a copy to avoid double-free
+        TM32ASM_Token* tokenCopy = TM32ASM_CreateToken(token->lexeme, token->type);
+        if (tokenCopy == NULL) {
+            TM32ASM_LogError("Failed to create token copy for identifier");
+            return false;
+        }
+        tokenCopy->param = token->param;
+        tokenCopy->filename = token->filename;
+        tokenCopy->line = token->line;
+        
+        TM32ASM_InsertToken(outputStream, tokenCopy);
     }
     
     return true;
@@ -1056,5 +1205,436 @@ static bool TM32ASM_AddIncludedFile (
     strcpy(filepathCopy, filepath);
     
     preprocessor->includedFiles[preprocessor->includedFileCount++] = filepathCopy;
+    return true;
+}
+
+static bool TM32ASM_HandleLetDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .let directive at %s:%u", token->filename, token->line);
+    
+    // Get the next token, which should be an identifier (variable name)
+    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (nameToken == NULL) {
+        TM32ASM_LogError("Expected variable name after .let directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    if (nameToken->type != TM32ASM_TT_IDENTIFIER) {
+        TM32ASM_LogError("Expected identifier for variable name in .let directive at %s:%u, got %s", 
+                         token->filename, token->line, nameToken->lexeme);
+        return false;
+    }
+    
+    // Get the next token, which should be an assignment operator
+    TM32ASM_Token* assignToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (assignToken == NULL) {
+        TM32ASM_LogError("Expected assignment operator after variable name in .let directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    if (assignToken->type != TM32ASM_TT_ASSIGN_EQUAL) {
+        TM32ASM_LogError("Expected '=' after variable name in .let directive at %s:%u, got %s", 
+                         token->filename, token->line, assignToken->lexeme);
+        return false;
+    }
+    
+    // Get the value token (for now, just support simple literals and identifiers)
+    TM32ASM_Token* valueToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (valueToken == NULL) {
+        TM32ASM_LogError("Expected value after '=' in .let directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Create a copy of the value token for storage
+    TM32ASM_Token* storedValue = TM32ASM_CreateToken(valueToken->lexeme, valueToken->type);
+    if (storedValue == NULL) {
+        TM32ASM_LogError("Failed to create value token for .let directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    storedValue->param = valueToken->param;
+    storedValue->filename = token->filename;
+    storedValue->line = token->line;
+    
+    // Define or redefine the symbol
+    if (!TM32ASM_DefineSymbol(preprocessor, nameToken->lexeme, storedValue, false, token->filename, token->line)) {
+        TM32ASM_LogError("Failed to define variable '%s' in .let directive at %s:%u", 
+                         nameToken->lexeme, token->filename, token->line);
+        TM32ASM_DestroyToken(storedValue);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Defined variable '%s' with value '%s'", 
+                     nameToken->lexeme, storedValue->lexeme);
+    
+    return true;
+}
+
+static bool TM32ASM_HandleConstDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .const directive at %s:%u", token->filename, token->line);
+    
+    // Get the next token, which should be an identifier (constant name)
+    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (nameToken == NULL) {
+        TM32ASM_LogError("Expected constant name after .const directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    if (nameToken->type != TM32ASM_TT_IDENTIFIER) {
+        TM32ASM_LogError("Expected identifier for constant name in .const directive at %s:%u, got %s", 
+                         token->filename, token->line, nameToken->lexeme);
+        return false;
+    }
+    
+    // Check if constant already exists
+    TM32ASM_Symbol* existingSymbol = TM32ASM_LookupSymbol(preprocessor, nameToken->lexeme);
+    if (existingSymbol != NULL && existingSymbol->isConstant) {
+        TM32ASM_LogError("Constant '%s' is already defined at %s:%u", 
+                         nameToken->lexeme, token->filename, token->line);
+        return false;
+    }
+    
+    // Get the next token, which should be an assignment operator
+    TM32ASM_Token* assignToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (assignToken == NULL) {
+        TM32ASM_LogError("Expected assignment operator after constant name in .const directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    if (assignToken->type != TM32ASM_TT_ASSIGN_EQUAL) {
+        TM32ASM_LogError("Expected '=' after constant name in .const directive at %s:%u, got %s", 
+                         token->filename, token->line, assignToken->lexeme);
+        return false;
+    }
+    
+    // Get the value token (for now, just support simple literals and identifiers)
+    TM32ASM_Token* valueToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (valueToken == NULL) {
+        TM32ASM_LogError("Expected value after '=' in .const directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Create a copy of the value token for storage
+    TM32ASM_Token* storedValue = TM32ASM_CreateToken(valueToken->lexeme, valueToken->type);
+    if (storedValue == NULL) {
+        TM32ASM_LogError("Failed to create value token for .const directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    storedValue->param = valueToken->param;
+    storedValue->filename = token->filename;
+    storedValue->line = token->line;
+    
+    TM32ASM_LogDebug("Created constant token: lexeme='%s', type=%d, param=%d", 
+                     storedValue->lexeme, storedValue->type, storedValue->param);
+    
+    // Define the constant symbol (immutable)
+    if (!TM32ASM_DefineSymbol(preprocessor, nameToken->lexeme, storedValue, true, token->filename, token->line)) {
+        TM32ASM_LogError("Failed to define constant '%s' in .const directive at %s:%u", 
+                         nameToken->lexeme, token->filename, token->line);
+        TM32ASM_DestroyToken(storedValue);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Defined constant '%s' with value '%s'", 
+                     nameToken->lexeme, storedValue->lexeme);
+    
+    return true;
+}
+
+static bool TM32ASM_HandleIfDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .if directive at %s:%u", token->filename, token->line);
+    
+    // Get the condition token (for now, just support simple values)
+    TM32ASM_Token* conditionToken = TM32ASM_ConsumeNextToken(inputStream);
+    if (conditionToken == NULL) {
+        TM32ASM_LogError("Expected condition after .if directive at %s:%u", 
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Evaluate simple condition (integer literals, identifiers)
+    bool conditionTrue = false;
+    
+    if (conditionToken->type == TM32ASM_TT_DECIMAL ||
+        conditionToken->type == TM32ASM_TT_HEXADECIMAL ||
+        conditionToken->type == TM32ASM_TT_BINARY ||
+        conditionToken->type == TM32ASM_TT_OCTAL) {
+        // For numeric literals, non-zero is true
+        conditionTrue = (conditionToken->param != 0);
+    } else if (conditionToken->type == TM32ASM_TT_IDENTIFIER) {
+        // Look up the symbol
+        TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, conditionToken->lexeme);
+        TM32ASM_LogDebug("Looking up symbol '%s': %s", conditionToken->lexeme, symbol ? "found" : "not found");
+        if (symbol != NULL) {
+            TM32ASM_LogDebug("Symbol value type: %d, lexeme: '%s', param: %d", 
+                             symbol->value->type, symbol->value->lexeme, symbol->value->param);
+            // Check the symbol's value
+            if (symbol->value->type == TM32ASM_TT_DECIMAL ||
+                symbol->value->type == TM32ASM_TT_HEXADECIMAL ||
+                symbol->value->type == TM32ASM_TT_BINARY ||
+                symbol->value->type == TM32ASM_TT_OCTAL) {
+                // Use param if available, otherwise parse the lexeme
+                int32_t value = symbol->value->param;
+                if (value == 0 && symbol->value->lexeme != NULL) {
+                    // Try to parse the lexeme as a fallback
+                    value = atoi(symbol->value->lexeme);
+                }
+                conditionTrue = (value != 0);
+            } else {
+                // For non-numeric types, consider them false
+                conditionTrue = false;
+            }
+        } else {
+            TM32ASM_LogError("Undefined symbol '%s' in .if condition at %s:%u",
+                             conditionToken->lexeme, token->filename, token->line);
+            return false;
+        }
+    } else {
+        TM32ASM_LogError("Unsupported condition type in .if directive at %s:%u (got %d)", 
+                         token->filename, token->line, conditionToken->type);
+        return false;
+    }
+    
+    // Push new conditional state
+    // The condition is active if current context allows it AND the condition is true
+    bool currentlyActive = TM32ASM_ShouldProcessTokens(preprocessor);
+    bool newActive = currentlyActive && conditionTrue;
+    
+    if (!TM32ASM_PushConditional(preprocessor, newActive, token->filename, token->line)) {
+        TM32ASM_LogError("Failed to push conditional state for .if directive at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Condition evaluated to %s, block is %s",
+                     conditionTrue ? "true" : "false",
+                     newActive ? "active" : "inactive");
+    
+    return true;
+}
+
+static bool TM32ASM_HandleElseifDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .elseif/.elif directive at %s:%u", token->filename, token->line);
+    
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalCount == 0) {
+        TM32ASM_LogError(".elseif/.elif directive without matching .if at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_ConditionalState* current = &preprocessor->conditionals[preprocessor->conditionalCount - 1];
+    
+    // Check if we're already in an else block
+    if (current->inElse) {
+        TM32ASM_LogError(".elseif/.elif directive after .else at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Only evaluate condition if no previous branch has been taken
+    bool conditionTrue = false;
+    if (!current->taken) {
+        // Get the condition token (for now, just support simple values)
+        TM32ASM_Token* conditionToken = TM32ASM_ConsumeNextToken(inputStream);
+        if (conditionToken == NULL) {
+            TM32ASM_LogError("Expected condition after .elseif/.elif directive at %s:%u", 
+                             token->filename, token->line);
+            return false;
+        }
+        
+        // Evaluate simple condition (integer literals, identifiers)
+        if (conditionToken->type == TM32ASM_TT_DECIMAL ||
+            conditionToken->type == TM32ASM_TT_HEXADECIMAL ||
+            conditionToken->type == TM32ASM_TT_BINARY ||
+            conditionToken->type == TM32ASM_TT_OCTAL) {
+            // For numeric literals, non-zero is true
+            conditionTrue = (conditionToken->param != 0);
+        } else if (conditionToken->type == TM32ASM_TT_IDENTIFIER) {
+            // Look up the symbol
+            TM32ASM_Symbol* symbol = TM32ASM_LookupSymbol(preprocessor, conditionToken->lexeme);
+            if (symbol != NULL) {
+                // Check the symbol's value
+                if (symbol->value->type == TM32ASM_TT_DECIMAL ||
+                    symbol->value->type == TM32ASM_TT_HEXADECIMAL ||
+                    symbol->value->type == TM32ASM_TT_BINARY ||
+                    symbol->value->type == TM32ASM_TT_OCTAL) {
+                    // Use param if available, otherwise parse the lexeme
+                    int32_t value = symbol->value->param;
+                    if (value == 0 && symbol->value->lexeme != NULL) {
+                        // Try to parse the lexeme as a fallback
+                        value = atoi(symbol->value->lexeme);
+                    }
+                    conditionTrue = (value != 0);
+                }
+            } else {
+                TM32ASM_LogError("Undefined symbol '%s' in .elseif/.elif condition at %s:%u",
+                                 conditionToken->lexeme, token->filename, token->line);
+                return false;
+            }
+        } else {
+            TM32ASM_LogError("Unsupported condition type in .elseif/.elif directive at %s:%u", 
+                             token->filename, token->line);
+            return false;
+        }
+    }
+    
+    // Update conditional state
+    // Only activate if no previous branch has been taken AND condition is true
+    // Check if parent context allows processing (for nested conditionals)
+    bool parentActive = true;
+    if (preprocessor->conditionalCount > 1) {
+        // Temporarily remove current conditional to check parent context
+        preprocessor->conditionalCount--;
+        parentActive = TM32ASM_ShouldProcessTokens(preprocessor);
+        preprocessor->conditionalCount++;
+    }
+    
+    current->active = parentActive && !current->taken && conditionTrue;
+    if (conditionTrue && !current->taken) {
+        current->taken = true;
+    }
+    
+    TM32ASM_LogDebug("Elseif condition evaluated to %s, block is %s",
+                     conditionTrue ? "true" : "false",
+                     current->active ? "active" : "inactive");
+    
+    return true;
+}
+
+static bool TM32ASM_HandleElseDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .else directive at %s:%u", token->filename, token->line);
+    
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalCount == 0) {
+        TM32ASM_LogError(".else directive without matching .if at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_ConditionalState* current = &preprocessor->conditionals[preprocessor->conditionalCount - 1];
+    
+    // Check if we're already in an else block
+    if (current->inElse) {
+        TM32ASM_LogError("Multiple .else directives in same conditional block at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Update conditional state
+    // Only activate if no previous branch has been taken
+    // Check if parent context allows processing (for nested conditionals)
+    bool parentActive = true;
+    if (preprocessor->conditionalCount > 1) {
+        // Temporarily remove current conditional to check parent context
+        preprocessor->conditionalCount--;
+        parentActive = TM32ASM_ShouldProcessTokens(preprocessor);
+        preprocessor->conditionalCount++;
+    }
+    
+    current->active = parentActive && !current->taken;
+    current->inElse = true;
+    if (!current->taken) {
+        current->taken = true;
+    }
+    
+    TM32ASM_LogDebug("Else block is %s", current->active ? "active" : "inactive");
+    
+    return true;
+}
+
+static bool TM32ASM_HandleEndifDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    inputStream,
+    TM32ASM_TokenStream*    outputStream,
+    TM32ASM_Token*          token
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(inputStream, false);
+    TM32ASM_ReturnValueIfNull(outputStream, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    
+    TM32ASM_LogDebug("Processing .endif/.endc directive at %s:%u", token->filename, token->line);
+    
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalCount == 0) {
+        TM32ASM_LogError(".endif/.endc directive without matching .if at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    // Pop the conditional state
+    if (!TM32ASM_PopConditional(preprocessor)) {
+        TM32ASM_LogError("Failed to pop conditional state for .endif/.endc directive at %s:%u",
+                         token->filename, token->line);
+        return false;
+    }
+    
+    TM32ASM_LogDebug("Conditional block ended");
+    
     return true;
 }

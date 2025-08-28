@@ -217,7 +217,11 @@ void TM32ASM_DestroyToken (
 {
     if (token != NULL)
     {
-        TM32ASM_Destroy(token->lexeme);
+        if (token->lexeme != NULL)
+        {
+            TM32ASM_Destroy(token->lexeme);
+            token->lexeme = NULL;
+        }
         TM32ASM_Destroy(token);
     }
 }

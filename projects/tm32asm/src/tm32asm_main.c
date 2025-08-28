@@ -146,6 +146,7 @@ int main (int argc, const char** argv)
     if (lexOnly)
     {
         TM32ASM_PrintTokens(processedStream);
+        TM32ASM_DestroyTokenStream(processedStream);
         TM32ASM_DestroyPreprocessor(preprocessor);
         TM32ASM_DestroyLexer(lexer);
         return 0;
@@ -166,6 +167,7 @@ int main (int argc, const char** argv)
         TM32ASM_LogInfo("Full assembly not yet implemented");
     }
     
+    TM32ASM_DestroyTokenStream(processedStream);
     TM32ASM_DestroyPreprocessor(preprocessor);
     TM32ASM_DestroyLexer(lexer);
     return 0;

@@ -727,7 +727,7 @@ static TM32ASM_Token* TM32ASM_TokenizeOperator (TM32ASM_Lexer* lexer)
             case '}': tokenType = TM32ASM_TT_CLOSE_BRACE; break;
             case ',': tokenType = TM32ASM_TT_COMMA; break;
             case ':': tokenType = TM32ASM_TT_COLON; break;
-            case '?':
+            case '?': tokenType = TM32ASM_TT_QUESTION; break;
             case '#':
                 // These characters might be part of macro syntax but standalone
                 // they're not recognized in this context
@@ -804,8 +804,6 @@ static TM32ASM_Token* TM32ASM_TokenizeOperator (TM32ASM_Lexer* lexer)
     
     return token;
 }
-
-/* Public Functions ***********************************************************/
 
 /* Public Functions ***********************************************************/
 
