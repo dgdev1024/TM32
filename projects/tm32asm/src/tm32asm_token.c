@@ -243,7 +243,7 @@ bool TM32ASM_GetKeyword (
 
     for (size_t i = 0; KEYWORD_LOOKUP[i].lexeme != NULL; i++)
     {
-        if (strcmp(token->lexeme, KEYWORD_LOOKUP[i].lexeme) == 0)
+        if (strcasecmp(token->lexeme, KEYWORD_LOOKUP[i].lexeme) == 0)
         {
             *out = TM32ASM_CreateToken(
                 KEYWORD_LOOKUP[i].lexeme,

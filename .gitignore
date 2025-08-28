@@ -67,3 +67,7 @@ examples/test
 # All `.md` files, except `README.md`
 *.md
 !README.md
+
+# All files in all folders with backup extensions (`.old`, `.backup`, etc.)
+*.old
+*.backup

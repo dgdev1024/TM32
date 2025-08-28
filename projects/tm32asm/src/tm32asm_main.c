@@ -114,61 +114,6 @@ int main (int argc, const char** argv)
         return 1;
     }
     
-    // Get token stream
-    TM32ASM_TokenStream* tokenStream = TM32ASM_GetTokenStream(lexer);
-    if (tokenStream == NULL)
-    {
-        TM32ASM_LogError("Failed to get token stream");
-        TM32ASM_DestroyLexer(lexer);
-        return 1;
-    }
-    
-    // Create preprocessor and process the token stream
-    TM32ASM_Preprocessor* preprocessor = TM32ASM_CreatePreprocessor();
-    if (preprocessor == NULL)
-    {
-        TM32ASM_LogError("Failed to create preprocessor");
-        TM32ASM_DestroyLexer(lexer);
-        return 1;
-    }
-    
-    // Process tokens through the preprocessor
-    TM32ASM_TokenStream* processedStream = TM32ASM_ProcessTokens(preprocessor, tokenStream);
-    if (processedStream == NULL)
-    {
-        TM32ASM_LogError("Failed to preprocess token stream");
-        TM32ASM_DestroyPreprocessor(preprocessor);
-        TM32ASM_DestroyLexer(lexer);
-        return 1;
-    }
-    
-    // If lex-only mode, print tokens and exit
-    if (lexOnly)
-    {
-        TM32ASM_PrintTokens(processedStream);
-        TM32ASM_DestroyTokenStream(processedStream);
-        TM32ASM_DestroyPreprocessor(preprocessor);
-        TM32ASM_DestroyLexer(lexer);
-        return 0;
-    }
-    
-    // For now, just print that preprocessing was successful
-    TM32ASM_LogInfo("Lexical analysis completed successfully for '%s'", sourceFile);
-    TM32ASM_LogInfo("Found %zu tokens after lexing", tokenStream->tokenCount);
-    TM32ASM_LogInfo("Found %zu tokens after preprocessing", processedStream->tokenCount);
-    
-    // TODO: Add parser, semantic analyzer, and code generator
-    if (parseOnly)
-    {
-        TM32ASM_LogInfo("Parse-only mode not yet implemented");
-    }
-    else
-    {
-        TM32ASM_LogInfo("Full assembly not yet implemented");
-    }
-    
-    TM32ASM_DestroyTokenStream(processedStream);
-    TM32ASM_DestroyPreprocessor(preprocessor);
     TM32ASM_DestroyLexer(lexer);
     return 0;
 }
