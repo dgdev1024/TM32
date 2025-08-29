@@ -41,6 +41,9 @@ The following options are available for the `tm32asm` command:
     the tokens to standard output. No further processing (including preprocessing,
     parsing, or code generation) is performed. This option is ignored if
     `--parse-only` is also specified.
+- `-r, --preprocess-only`: Performs lexical analysis and preprocessing on the
+    source file, and outputs the preprocessed source code to standard output.
+    No parsing or code generation is performed.
 - `-p, --parse-only`: Perform lexical analysis, preprocessing, and parsing on
     the source file, and output the abstract syntax tree (AST) to standard output.
     No code generation is performed.

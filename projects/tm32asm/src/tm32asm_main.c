@@ -24,11 +24,12 @@ static void TM32ASM_PrintUsage (const char* programName)
 {
     printf("Usage: %s [options] <source_file.asm> [-o <output_file.o>]\n", programName);
     printf("Options:\n");
-    printf("  -l, --lex-only       Perform only lexical analysis\n");
-    printf("  -p, --parse-only     Perform lexical analysis and parsing only\n");
-    printf("  -o, --output-file    Specify output file name\n");
-    printf("  -v, --version        Display version information\n");
-    printf("  -h, --help           Display this help message\n");
+    printf("  -l, --lex-only        Perform only lexical analysis\n");
+    printf("  -r, --preprocess-only Perform lexical analysis and preprocessing only\n");
+    printf("  -p, --parse-only      Perform lexical analysis, preprocessing and parsing only\n");
+    printf("  -o, --output-file     Specify output file name\n");
+    printf("  -v, --version         Display version information\n");
+    printf("  -h, --help            Display this help message\n");
 }
 
 static void TM32ASM_PrintVersion ()
@@ -88,6 +89,7 @@ int main (int argc, const char** argv)
     
     const char* sourceFile = argv[argc - 1]; // Last argument is the source file
     bool lexOnly = TM32ASM_HasArgumentKey("lex-only", 'l') != 0;
+    bool preprocessOnly = TM32ASM_HasArgumentKey("preprocess-only", 'r') != 0;
     bool parseOnly = TM32ASM_HasArgumentKey("parse-only", 'p') != 0;
     
     // Create lexer
@@ -113,7 +115,62 @@ int main (int argc, const char** argv)
         TM32ASM_DestroyLexer(lexer);
         return 1;
     }
+
+    // Get the token stream.
+    TM32ASM_TokenStream* stream = TM32ASM_GetTokenStream(lexer);
+
+    // If `--lex-only`, just print the lexed tokens and exit.
+    if (lexOnly == true)
+    {
+        TM32ASM_PrintTokens(stream);
+        TM32ASM_DestroyLexer(lexer);
+        return 0;
+    }
     
+    // Create preprocessor
+    TM32ASM_Preprocessor* preprocessor = TM32ASM_CreatePreprocessor();
+    if (preprocessor == NULL)
+    {
+        TM32ASM_LogError("Failed to create preprocessor");
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // Process the token stream through the preprocessor
+    TM32ASM_TokenStream* processedStream = TM32ASM_ProcessTokenStream(preprocessor, stream);
+    if (processedStream == NULL)
+    {
+        TM32ASM_LogError("Failed to preprocess token stream");
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // If `--preprocess-only`, print the preprocessed tokens and exit.
+    if (preprocessOnly == true)
+    {
+        printf("=== PREPROCESSING RESULTS ===\n");
+        printf("Total tokens: %zu\n\n", processedStream->tokenCount);
+        
+        for (size_t i = 0; i < processedStream->tokenCount; i++)
+        {
+            TM32ASM_Token* token = processedStream->tokens[i];
+            if (token != NULL)
+            {
+                printf("[%zu] Type: %d, Lexeme: \"%s\", Line: %u\n", 
+                       i, token->type, token->lexeme, token->line);
+            }
+        }
+        
+        printf("\n=== END PREPROCESSING ===\n");
+        TM32ASM_DestroyTokenStream(processedStream);
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 0;
+    }
+    
+    TM32ASM_DestroyTokenStream(processedStream);
+    TM32ASM_DestroyPreprocessor(preprocessor);
     TM32ASM_DestroyLexer(lexer);
     return 0;
 }

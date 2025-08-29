@@ -244,6 +244,18 @@ void TM32ASM_DestroyToken (
 );
 
 /**
+ * @brief   Creates a copy of an existing syntax token.
+ * 
+ * @param   token  A pointer to the token to copy.
+ * 
+ * @return  A pointer to the newly created token copy if successful, or `NULL` if
+ *          memory allocation fails or the input token is `NULL`.
+ */
+TM32ASM_Token* TM32ASM_CopyToken (
+    const TM32ASM_Token* token
+);
+
+/**
  * @brief   Checks to see if the lexeme in the given token indicates a keyword,
  *          and if so, retrieves the corresponding keyword token.
  * 

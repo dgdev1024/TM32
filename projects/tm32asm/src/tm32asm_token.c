@@ -233,6 +233,25 @@ void TM32ASM_DestroyToken (
     }
 }
 
+TM32ASM_Token* TM32ASM_CopyToken (
+    const TM32ASM_Token* token
+)
+{
+    TM32ASM_ReturnValueIfNull(token, NULL);
+
+    TM32ASM_Token* copy = TM32ASM_CreateToken(token->lexeme, token->type);
+    if (copy == NULL)
+    {
+        return NULL;
+    }
+
+    copy->param = token->param;
+    copy->filename = token->filename; // Note: filename is not owned by the token, so we just copy the pointer
+    copy->line = token->line;
+
+    return copy;
+}
+
 bool TM32ASM_GetKeyword (
     const TM32ASM_Token*     token,
     TM32ASM_Token**          out

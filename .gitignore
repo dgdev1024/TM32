@@ -71,3 +71,7 @@ examples/test
 # All files in all folders with backup extensions (`.old`, `.backup`, etc.)
 *.old
 *.backup
+
+# All folders and subfolders named "temp"
+temp/
+

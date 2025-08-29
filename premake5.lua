@@ -147,7 +147,8 @@ workspace "TM32"
             table.unpack(external_includes) 
         }
         links {
-            "tm32cpu"
+            "tm32cpu",
+            "m"
         }
         
     -- Project: `tm32link` - TM32 CPU Linker Tool
