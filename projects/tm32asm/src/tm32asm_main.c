@@ -27,6 +27,7 @@ static void TM32ASM_PrintUsage (const char* programName)
     printf("  -l, --lex-only        Perform only lexical analysis\n");
     printf("  -r, --preprocess-only Perform lexical analysis and preprocessing only\n");
     printf("  -p, --parse-only      Perform lexical analysis, preprocessing and parsing only\n");
+    printf("      --variables       List all preprocessor variables (use with --preprocess-only)\n");
     printf("  -o, --output-file     Specify output file name\n");
     printf("  -v, --version         Display version information\n");
     printf("  -h, --help            Display this help message\n");
@@ -57,6 +58,81 @@ static bool TM32ASM_PrintTokens (TM32ASM_TokenStream* tokenStream)
     
     printf("\n=== END LEXICAL ANALYSIS ===\n");
     return true;
+}
+
+static void TM32ASM_PrintPreprocessorVariables (TM32ASM_Preprocessor* preprocessor)
+{
+    if (preprocessor == NULL)
+    {
+        return;
+    }
+    
+    printf("=== PREPROCESSOR VARIABLES ===\n");
+    
+    // Get access to the preprocessor's symbol table
+    size_t symbolCount = 0;
+    const TM32ASM_Symbol* symbols = TM32ASM_GetSymbolTable(preprocessor, &symbolCount);
+    
+    if (symbols == NULL || symbolCount == 0)
+    {
+        printf("  No variables found.\n");
+        printf("=== END PREPROCESSOR VARIABLES ===\n");
+        return;
+    }
+    
+    int foundCount = 0;
+    
+    // Iterate through all symbols in the preprocessor's symbol table
+    for (size_t i = 0; i < symbolCount; i++)
+    {
+        const TM32ASM_Symbol* symbol = &symbols[i];
+        
+        // Only display variables and constants that are defined and resolved
+        if (symbol->name != NULL && symbol->isDefined && symbol->isResolved &&
+            (symbol->type == TM32ASM_ST_VARIABLE || symbol->type == TM32ASM_ST_CONSTANT))
+        {
+            TM32ASM_Value result;
+            if (TM32ASM_ViewVariable(preprocessor, symbol->name, &result))
+            {
+                char* valueStr = TM32ASM_ValueToString(&result);
+                const char* typeStr = "unknown";
+                
+                switch (result.type)
+                {
+                    case TM32ASM_VT_INTEGER:
+                        typeStr = "integer";
+                        break;
+                    case TM32ASM_VT_FIXED_POINT:
+                        typeStr = "fixed-point";
+                        break;
+                    case TM32ASM_VT_STRING:
+                        typeStr = "string";
+                        break;
+                    case TM32ASM_VT_CHARACTER:
+                        typeStr = "character";
+                        break;
+                }
+                
+                printf("  %-15s = %-15s (%s)\n", symbol->name, 
+                       valueStr ? valueStr : "NULL", typeStr);
+                
+                if (valueStr) free(valueStr);
+                TM32ASM_DestroyValue(&result);
+                foundCount++;
+            }
+        }
+    }
+    
+    if (foundCount == 0)
+    {
+        printf("  No variables found.\n");
+    }
+    else
+    {
+        printf("\nTotal variables found: %d\n", foundCount);
+    }
+    
+    printf("=== END PREPROCESSOR VARIABLES ===\n");
 }
 
 /* Private Functions **********************************************************/
@@ -91,6 +167,7 @@ int main (int argc, const char** argv)
     bool lexOnly = TM32ASM_HasArgumentKey("lex-only", 'l') != 0;
     bool preprocessOnly = TM32ASM_HasArgumentKey("preprocess-only", 'r') != 0;
     bool parseOnly = TM32ASM_HasArgumentKey("parse-only", 'p') != 0;
+    bool showVariables = TM32ASM_HasArgumentKey("variables", '\0') != 0;
     
     // Create lexer
     TM32ASM_Lexer* lexer = TM32ASM_CreateLexer();
@@ -149,20 +226,29 @@ int main (int argc, const char** argv)
     // If `--preprocess-only`, print the preprocessed tokens and exit.
     if (preprocessOnly == true)
     {
-        printf("=== PREPROCESSING RESULTS ===\n");
-        printf("Total tokens: %zu\n\n", processedStream->tokenCount);
-        
-        for (size_t i = 0; i < processedStream->tokenCount; i++)
+        // If --variables flag is also provided, list all preprocessor variables
+        if (showVariables)
         {
-            TM32ASM_Token* token = processedStream->tokens[i];
-            if (token != NULL)
+            TM32ASM_PrintPreprocessorVariables(preprocessor);
+        }
+        else
+        {
+            printf("=== PREPROCESSING RESULTS ===\n");
+            printf("Total tokens: %zu\n\n", processedStream->tokenCount);
+            
+            for (size_t i = 0; i < processedStream->tokenCount; i++)
             {
-                printf("[%zu] Type: %d, Lexeme: \"%s\", Line: %u\n", 
-                       i, token->type, token->lexeme, token->line);
+                TM32ASM_Token* token = processedStream->tokens[i];
+                if (token != NULL)
+                {
+                    printf("[%zu] Type: %d, Lexeme: \"%s\", Line: %u\n", 
+                           i, token->type, token->lexeme, token->line);
+                }
             }
+            
+            printf("\n=== END PREPROCESSING ===\n");
         }
         
-        printf("\n=== END PREPROCESSING ===\n");
         TM32ASM_DestroyTokenStream(processedStream);
         TM32ASM_DestroyPreprocessor(preprocessor);
         TM32ASM_DestroyLexer(lexer);

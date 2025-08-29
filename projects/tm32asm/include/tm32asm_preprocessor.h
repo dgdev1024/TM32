@@ -34,7 +34,9 @@ typedef enum
 {
     TM32ASM_VT_INTEGER = 0,             /** @brief Integer value */
     TM32ASM_VT_FIXED_POINT,             /** @brief Fixed-point value */
-    TM32ASM_VT_STRING                   /** @brief String value */
+    TM32ASM_VT_STRING,                  /** @brief String value */
+    TM32ASM_VT_CHARACTER,               /** @brief Character value */
+    TM32ASM_VT_IDENTIFIER               /** @brief Identifier value */
 } TM32ASM_ValueType;
 
 /**
@@ -82,8 +84,10 @@ typedef struct
     union
     {
         int64_t         integerValue;   /** @brief Integer value */
+        int64_t         intValue;       /** @brief Alias for integerValue */
         double          fixedPointValue;/** @brief Fixed-point value */
         char*           stringValue;    /** @brief String value */
+        char            characterValue; /** @brief Character value */
     };
 } TM32ASM_Value;
 
@@ -95,10 +99,12 @@ typedef struct
     char*                   name;           /** @brief Symbol name */
     TM32ASM_SymbolType      type;           /** @brief Symbol type */
     char*                   value;          /** @brief Symbol value (for variables/constants/simple macros) */
+    char*                   expression;     /** @brief Unresolved expression string (for forward references) */
     char**                  parameters;     /** @brief Parameter names (for parametric macros) */
     size_t                  parameterCount; /** @brief Number of parameters (for parametric macros) */
     TM32ASM_TokenStream*    body;           /** @brief Macro body tokens (for parametric macros) */
     bool                    isDefined;      /** @brief Whether the symbol is currently defined */
+    bool                    isResolved;     /** @brief Whether the symbol's value is fully resolved */
 } TM32ASM_Symbol;
 
 /**
@@ -256,6 +262,21 @@ bool TM32ASM_DefineVariable (
 );
 
 /**
+ * @brief   Defines a variable with an expression that may contain forward references.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * @param   name            The name of the variable.
+ * @param   expression      The expression to evaluate for the variable value.
+ * 
+ * @return  `true` if the variable was defined successfully; `false` otherwise.
+ */
+bool TM32ASM_DefineVariableWithExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             name,
+    const char*             expression
+);
+
+/**
  * @brief   Defines a constant in the preprocessor's symbol table.
  * 
  * @param   preprocessor    A pointer to the TM32ASM preprocessor.
@@ -297,6 +318,17 @@ void TM32ASM_SetTreatWarningsAsErrors (
 );
 
 /**
+ * @brief   Resolves all forward references in the preprocessor's symbol table.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if all forward references were resolved; `false` otherwise.
+ */
+bool TM32ASM_ResolveAllForwardReferences (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
  * @brief   Checks if the preprocessor has encountered any errors during processing.
  * 
  * @param   preprocessor    A pointer to the TM32ASM preprocessor.
@@ -319,6 +351,25 @@ bool TM32ASM_HasErrors (
  * @return  `true` if evaluation was successful; `false` otherwise.
  */
 bool TM32ASM_EvaluateExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokens,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    TM32ASM_Value*          result
+);
+
+/**
+ * @brief   Evaluates a built-in function expression.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   tokens          The token stream.
+ * @param   startIndex      The start index in the token stream.
+ * @param   endIndex        The end index in the token stream.
+ * @param   result          Pointer to store the result value.
+ * 
+ * @return  true if evaluation was successful, false otherwise.
+ */
+bool TM32ASM_EvaluateFunction (
     TM32ASM_Preprocessor*   preprocessor,
     TM32ASM_TokenStream*    tokens,
     size_t                  startIndex,
@@ -360,6 +411,17 @@ TM32ASM_Value TM32ASM_CreateStringValue (
 );
 
 /**
+ * @brief   Creates a new value with a character.
+ * 
+ * @param   value   The character value.
+ * 
+ * @return  A new TM32ASM_Value containing the character.
+ */
+TM32ASM_Value TM32ASM_CreateCharacterValue (
+    char value
+);
+
+/**
  * @brief   Destroys a value and frees any associated memory.
  * 
  * @param   value   A pointer to the value to destroy.
@@ -377,6 +439,35 @@ void TM32ASM_DestroyValue (
  */
 char* TM32ASM_ValueToString (
     const TM32ASM_Value* value
+);
+
+/**
+ * @brief   Views the contents of a preprocessor variable or constant.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * @param   name            The name of the variable/constant to view.
+ * @param   result          A pointer to store the variable's value.
+ * 
+ * @return  `true` if the variable/constant was found and retrieved successfully; `false` otherwise.
+ */
+bool TM32ASM_ViewVariable (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             name,
+    TM32ASM_Value*          result
+);
+
+/**
+ * @brief   Provides read-only access to the preprocessor's symbol table.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * @param   symbolCount     Output parameter for the number of symbols (can be NULL).
+ * 
+ * @return  A pointer to the array of symbols, or NULL if the preprocessor is invalid.
+ *          The returned pointer should NOT be modified or freed by the caller.
+ */
+const TM32ASM_Symbol* TM32ASM_GetSymbolTable (
+    const TM32ASM_Preprocessor* preprocessor,
+    size_t*                     symbolCount
 );
 
 #endif // TM32ASM_PREPROCESSOR_H

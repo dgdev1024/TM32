@@ -6,7 +6,7 @@
 ;
 
 ; Run this file with:
-;   `tm32asm --preprocessor-only examples/preprocessor/template.asm`
+;   `tm32asm --preprocess-only examples/preprocessor/template.asm`
 
 .text
 main:

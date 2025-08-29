@@ -5,7 +5,7 @@
 ;
 
 ; Run this file with:
-;   `tm32asm --preprocessor-only examples/preprocessor/00_expressions.asm`
+;   `tm32asm --preprocess-only examples/preprocessor/00_expressions.asm`
 
 .text
 main:

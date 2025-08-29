@@ -64,13 +64,16 @@ test_*
 examples/test
 *.log
 
-# All `.md` files, except `README.md`
+# All `.md` files in the project root, except `README.md`. Don't ignore the
+# `.md` files in the `docs/` folder.
 *.md
 !README.md
+!docs/*.md
 
 # All files in all folders with backup extensions (`.old`, `.backup`, etc.)
 *.old
 *.backup
+*.temp
 
 # All folders and subfolders named "temp"
 temp/

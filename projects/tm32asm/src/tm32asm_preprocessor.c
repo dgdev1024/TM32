@@ -12,6 +12,7 @@
 #include <tm32asm_lexer.h>
 #include <math.h>
 #include <inttypes.h>
+#include <errno.h>
 
 /* Private Macros *************************************************************/
 
@@ -139,6 +140,64 @@ static bool TM32ASM_ProcessDirective (
 );
 
 /**
+ * @brief   Processes a '.let' directive to define a mutable variable.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessLetDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Processes a '.const' directive to define an immutable constant.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessConstDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Consumes tokens from the input stream to parse a variable assignment.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * @param   isConstant      Whether this is a constant declaration.
+ * @param   varName         Output parameter for the variable name (caller must free).
+ * @param   hasAssignment   Output parameter indicating if there's an assignment.
+ * @param   value           Output parameter for the assigned value (caller must free).
+ * 
+ * @return  `true` if parsing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ParseVariableDeclaration (
+    TM32ASM_Preprocessor*   preprocessor,
+    bool                    isConstant,
+    char**                  varName,
+    bool*                   hasAssignment,
+    TM32ASM_Value*          value
+);
+
+/**
+ * @brief   Performs a compound assignment operation.
+ * 
+ * @param   lhs         The left-hand side value.
+ * @param   rhs         The right-hand side value.
+ * @param   operator    The compound assignment operator type.
+ * @param   result      Output parameter for the result.
+ * 
+ * @return  `true` if the operation was successful; `false` otherwise.
+ */
+static bool TM32ASM_PerformCompoundAssignment (
+    const TM32ASM_Value*    lhs,
+    const TM32ASM_Value*    rhs,
+    TM32ASM_TokenType       operator,
+    TM32ASM_Value*          result
+);
+
+/**
  * @brief   Checks if the current conditional state allows token processing.
  * 
  * @param   preprocessor    A pointer to the TM32ASM preprocessor.
@@ -173,6 +232,19 @@ static void TM32ASM_ReportWarning (
     TM32ASM_Preprocessor*   preprocessor,
     const char*             format,
     ...
+);
+
+/**
+ * @brief   Substitutes a variable or constant identifier with its value.
+ * 
+ * @param   preprocessor    The preprocessor.
+ * @param   token           The identifier token to potentially substitute.
+ * 
+ * @return  A new token with the substituted value, or NULL if no substitution.
+ */
+static TM32ASM_Token* TM32ASM_SubstituteVariable (
+    TM32ASM_Preprocessor*   preprocessor,
+    const TM32ASM_Token*    token
 );
 
 /* Private Functions **********************************************************/
@@ -320,6 +392,7 @@ static void TM32ASM_DestroySymbol (
 
     TM32ASM_Destroy(symbol->name);
     TM32ASM_Destroy(symbol->value);
+    TM32ASM_Destroy(symbol->expression);
     
     if (symbol->parameters != NULL)
     {
@@ -759,7 +832,6 @@ static bool TM32ASM_ProcessToken (
     }
 
     TM32ASM_Token* token = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
-    preprocessor->currentTokenIndex++;
 
     // Update current position for error reporting
     if (token != NULL)
@@ -787,7 +859,9 @@ static bool TM32ASM_ProcessToken (
                 return TM32ASM_ProcessDirective(preprocessor, token);
             }
         }
-        return true; // Skip this token
+        // Skip this token - advance the index manually since we're not processing it
+        preprocessor->currentTokenIndex++;
+        return true;
     }
 
     // Process the token based on its type
@@ -797,6 +871,9 @@ static bool TM32ASM_ProcessToken (
     }
     else
     {
+        // For non-directive tokens, advance the index
+        preprocessor->currentTokenIndex++;
+        
         // For non-directive tokens, check if we need to evaluate expressions
         // This happens when we encounter instruction operands
         if (preprocessor->outputStream != NULL)
@@ -846,7 +923,92 @@ static bool TM32ASM_ProcessToken (
                 }
                 else
                 {
-                    // Just copy the token as-is
+                    // Check if this identifier is a variable/constant that needs substitution
+                    if (token->type == TM32ASM_TT_IDENTIFIER)
+                    {
+                        TM32ASM_Token* substitutedToken = TM32ASM_SubstituteVariable(preprocessor, token);
+                        if (substitutedToken != NULL)
+                        {
+                            if (TM32ASM_PushTokenBack(preprocessor->outputStream, substitutedToken) == NULL)
+                            {
+                                TM32ASM_DestroyToken(substitutedToken);
+                                TM32ASM_ReportError(preprocessor, "Failed to add substituted token to output stream");
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            // Just copy the original token if no substitution was made
+                            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+                            if (copiedToken == NULL)
+                            {
+                                TM32ASM_ReportError(preprocessor, "Failed to copy token");
+                                return false;
+                            }
+                            
+                            if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
+                            {
+                                TM32ASM_DestroyToken(copiedToken);
+                                TM32ASM_ReportError(preprocessor, "Failed to add token to output stream");
+                                return false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Just copy the token as-is
+                        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+                        if (copiedToken == NULL)
+                        {
+                            TM32ASM_ReportError(preprocessor, "Failed to copy token");
+                            return false;
+                        }
+                        
+                        if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
+                        {
+                            TM32ASM_DestroyToken(copiedToken);
+                            TM32ASM_ReportError(preprocessor, "Failed to add token to output stream");
+                            return false;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Check if this identifier is a variable/constant that needs substitution
+                if (token != NULL && token->type == TM32ASM_TT_IDENTIFIER)
+                {
+                    TM32ASM_Token* substitutedToken = TM32ASM_SubstituteVariable(preprocessor, token);
+                    if (substitutedToken != NULL)
+                    {
+                        if (TM32ASM_PushTokenBack(preprocessor->outputStream, substitutedToken) == NULL)
+                        {
+                            TM32ASM_DestroyToken(substitutedToken);
+                            TM32ASM_ReportError(preprocessor, "Failed to add substituted token to output stream");
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        // Just copy the original token if no substitution was made
+                        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+                        if (copiedToken == NULL)
+                        {
+                            TM32ASM_ReportError(preprocessor, "Failed to copy token");
+                            return false;
+                        }
+                        
+                        if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
+                        {
+                            TM32ASM_DestroyToken(copiedToken);
+                            TM32ASM_ReportError(preprocessor, "Failed to add token to output stream");
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    // Just copy the token as-is for non-identifiers
                     TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
                     if (copiedToken == NULL)
                     {
@@ -860,23 +1022,6 @@ static bool TM32ASM_ProcessToken (
                         TM32ASM_ReportError(preprocessor, "Failed to add token to output stream");
                         return false;
                     }
-                }
-            }
-            else
-            {
-                // Just copy the token as-is
-                TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
-                if (copiedToken == NULL)
-                {
-                    TM32ASM_ReportError(preprocessor, "Failed to copy token");
-                    return false;
-                }
-                
-                if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
-                {
-                    TM32ASM_DestroyToken(copiedToken);
-                    TM32ASM_ReportError(preprocessor, "Failed to add token to output stream");
-                    return false;
                 }
             }
         }
@@ -893,26 +1038,37 @@ static bool TM32ASM_ProcessDirective (
     TM32ASM_ReturnValueIfNull(preprocessor, false);
     TM32ASM_ReturnValueIfNull(directive, false);
 
-    // TODO: Implement directive processing in subsequent implementations
-    // For now, we'll just log that we encountered a directive and pass it through
-    
-    TM32ASM_LogDebug("Processing directive: %s", directive->lexeme ? directive->lexeme : "<unknown>");
+    // TM32ASM_LogDebug("Processing directive: %s", directive->lexeme ? directive->lexeme : "<unknown>");
 
-    if (preprocessor->outputStream != NULL)
+    // Handle preprocessor directives
+    switch ((TM32ASM_DirectiveType) directive->param)
     {
-        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(directive);
-        if (copiedToken == NULL)
-        {
-            TM32ASM_ReportError(preprocessor, "Failed to copy directive token");
-            return false;
-        }
-        
-        if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
-        {
-            TM32ASM_DestroyToken(copiedToken);
-            TM32ASM_ReportError(preprocessor, "Failed to add directive token to output stream");
-            return false;
-        }
+        case TM32ASM_DT_LET:
+            return TM32ASM_ProcessLetDirective(preprocessor);
+
+        case TM32ASM_DT_CONST:
+            return TM32ASM_ProcessConstDirective(preprocessor);
+
+        default:
+            // For other directives, advance the token index and pass through to output
+            preprocessor->currentTokenIndex++;
+            if (preprocessor->outputStream != NULL)
+            {
+                TM32ASM_Token* copiedToken = TM32ASM_CopyToken(directive);
+                if (copiedToken == NULL)
+                {
+                    TM32ASM_ReportError(preprocessor, "Failed to copy directive token");
+                    return false;
+                }
+                
+                if (TM32ASM_PushTokenBack(preprocessor->outputStream, copiedToken) == NULL)
+                {
+                    TM32ASM_DestroyToken(copiedToken);
+                    TM32ASM_ReportError(preprocessor, "Failed to add directive token to output stream");
+                    return false;
+                }
+            }
+            break;
     }
 
     return true;
@@ -1005,6 +1161,637 @@ static void TM32ASM_ReportWarning (
     va_end(args);
 }
 
+/* Private Functions - Variable Processing ***********************************/
+
+static bool TM32ASM_ProcessLetDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Skip past the .let directive token
+    preprocessor->currentTokenIndex++;
+
+    char* varName = NULL;
+    bool hasAssignment = false;
+    TM32ASM_Value value = {0};
+
+    if (!TM32ASM_ParseVariableDeclaration(preprocessor, false, &varName, &hasAssignment, &value))
+    {
+        TM32ASM_Destroy(varName);
+        TM32ASM_DestroyValue(&value);
+        return false;
+    }
+
+    // Convert value to string for storage
+    char* valueString = NULL;
+    if (hasAssignment)
+    {
+        valueString = TM32ASM_ValueToString(&value);
+        if (valueString == NULL)
+        {
+            TM32ASM_ReportError(preprocessor, "Failed to convert value to string for variable '%s'", varName);
+            TM32ASM_Destroy(varName);
+            TM32ASM_DestroyValue(&value);
+            return false;
+        }
+    }
+
+    // Define the variable
+    bool success = TM32ASM_DefineVariable(preprocessor, varName, valueString);
+    
+    TM32ASM_Destroy(varName);
+    TM32ASM_Destroy(valueString);
+    TM32ASM_DestroyValue(&value);
+
+    return success;
+}
+
+static bool TM32ASM_ProcessConstDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Skip past the .const directive token
+    preprocessor->currentTokenIndex++;
+
+    char* varName = NULL;
+    bool hasAssignment = false;
+    TM32ASM_Value value = {0};
+
+    if (!TM32ASM_ParseVariableDeclaration(preprocessor, true, &varName, &hasAssignment, &value))
+    {
+        TM32ASM_Destroy(varName);
+        TM32ASM_DestroyValue(&value);
+        return false;
+    }
+
+    if (!hasAssignment)
+    {
+        TM32ASM_ReportError(preprocessor, "Constants must be explicitly initialized: '%s'", varName);
+        TM32ASM_Destroy(varName);
+        TM32ASM_DestroyValue(&value);
+        return false;
+    }
+
+    // Convert value to string for storage
+    char* valueString = TM32ASM_ValueToString(&value);
+    if (valueString == NULL)
+    {
+        TM32ASM_ReportError(preprocessor, "Failed to convert value to string for constant '%s'", varName);
+        TM32ASM_Destroy(varName);
+        TM32ASM_DestroyValue(&value);
+        return false;
+    }
+
+    // Define the constant
+    bool success = TM32ASM_DefineConstant(preprocessor, varName, valueString);
+    
+    TM32ASM_Destroy(varName);
+    TM32ASM_Destroy(valueString);
+    TM32ASM_DestroyValue(&value);
+
+    return success;
+}
+
+static bool TM32ASM_ParseVariableDeclaration (
+    TM32ASM_Preprocessor*   preprocessor,
+    bool                    isConstant,
+    char**                  varName,
+    bool*                   hasAssignment,
+    TM32ASM_Value*          value
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(varName, false);
+    TM32ASM_ReturnValueIfNull(hasAssignment, false);
+    TM32ASM_ReturnValueIfNull(value, false);
+
+    *varName = NULL;
+    *hasAssignment = false;
+    memset(value, 0, sizeof(TM32ASM_Value));
+
+    // Check if we have enough tokens
+    if (preprocessor->currentTokenIndex >= preprocessor->inputStream->tokenCount)
+    {
+        TM32ASM_ReportError(preprocessor, "Expected variable name after %s directive", 
+                           isConstant ? ".const" : ".let");
+        return false;
+    }
+
+    // Get the variable name token
+    TM32ASM_Token* nameToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+    {
+        TM32ASM_ReportError(preprocessor, "Expected identifier after %s directive", 
+                           isConstant ? ".const" : ".let");
+        return false;
+    }
+
+    // Copy the variable name
+    *varName = TM32ASM_Create(strlen(nameToken->lexeme) + 1, char);
+    if (*varName == NULL)
+    {
+        TM32ASM_LogErrno("Could not allocate memory for variable name");
+        return false;
+    }
+    strcpy(*varName, nameToken->lexeme);
+    preprocessor->currentTokenIndex++;
+
+    // Check for assignment (explicit with '=' or implicit without '=')
+    if (preprocessor->currentTokenIndex < preprocessor->inputStream->tokenCount)
+    {
+        TM32ASM_Token* nextToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+        if (nextToken != NULL && nextToken->type == TM32ASM_TT_ASSIGN_EQUAL)
+        {
+            *hasAssignment = true;
+            preprocessor->currentTokenIndex++; // Skip the '=' token
+
+            // Find the end of the expression
+            size_t exprStart = preprocessor->currentTokenIndex;
+            size_t exprEnd = TM32ASM_FindExpressionEnd(preprocessor, exprStart);
+
+            if (exprStart >= exprEnd)
+            {
+                TM32ASM_ReportError(preprocessor, "Expected expression after '=' in %s declaration", 
+                                   isConstant ? ".const" : ".let");
+                return false;
+            }
+
+            // Evaluate the expression
+            if (!TM32ASM_EvaluateExpression(preprocessor, preprocessor->inputStream, exprStart, exprEnd, value))
+            {
+                TM32ASM_ReportError(preprocessor, "Failed to evaluate expression in %s declaration", 
+                                   isConstant ? ".const" : ".let");
+                return false;
+            }
+
+            // Advance past the expression
+            preprocessor->currentTokenIndex = exprEnd;
+        }
+        else if (nextToken != NULL && TM32ASM_TokenStartsExpression(nextToken))
+        {
+            // Implicit assignment (no '=' token, directly followed by expression)
+            *hasAssignment = true;
+
+            // Find the end of the expression
+            size_t exprStart = preprocessor->currentTokenIndex;
+            size_t exprEnd = TM32ASM_FindExpressionEnd(preprocessor, exprStart);
+
+            if (exprStart >= exprEnd)
+            {
+                TM32ASM_ReportError(preprocessor, "Expected expression in %s declaration", 
+                                   isConstant ? ".const" : ".let");
+                return false;
+            }
+
+            // Evaluate the expression
+            if (!TM32ASM_EvaluateExpression(preprocessor, preprocessor->inputStream, exprStart, exprEnd, value))
+            {
+                TM32ASM_ReportError(preprocessor, "Failed to evaluate expression in %s declaration", 
+                                   isConstant ? ".const" : ".let");
+                return false;
+            }
+
+            // Advance past the expression
+            preprocessor->currentTokenIndex = exprEnd;
+        }
+        else if (nextToken != NULL)
+        {
+            // Check for compound assignment operators
+            bool isCompoundAssignment = false;
+            switch (nextToken->type)
+            {
+                case TM32ASM_TT_ASSIGN_PLUS:
+                case TM32ASM_TT_ASSIGN_MINUS:
+                case TM32ASM_TT_ASSIGN_TIMES:
+                case TM32ASM_TT_ASSIGN_EXPONENT:
+                case TM32ASM_TT_ASSIGN_DIVIDE:
+                case TM32ASM_TT_ASSIGN_MODULO:
+                case TM32ASM_TT_ASSIGN_BITWISE_AND:
+                case TM32ASM_TT_ASSIGN_BITWISE_OR:
+                case TM32ASM_TT_ASSIGN_BITWISE_XOR:
+                case TM32ASM_TT_ASSIGN_LEFT_SHIFT:
+                case TM32ASM_TT_ASSIGN_RIGHT_SHIFT:
+                    isCompoundAssignment = true;
+                    break;
+                default:
+                    break;
+            }
+
+            if (isCompoundAssignment)
+            {
+                if (isConstant)
+                {
+                    TM32ASM_ReportError(preprocessor, "Compound assignment operators cannot be used with constants");
+                    return false;
+                }
+
+                *hasAssignment = true;
+                
+                // For compound assignment, we need to evaluate the expression with the existing variable value
+                TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, *varName);
+                if (existingSymbol == NULL || existingSymbol->type != TM32ASM_ST_VARIABLE)
+                {
+                    TM32ASM_ReportError(preprocessor, "Variable '%s' must be defined before using compound assignment", *varName);
+                    return false;
+                }
+
+                // Get current value
+                TM32ASM_Value currentValue = {0};
+                if (existingSymbol->value != NULL)
+                {
+                    // Parse the existing value - try fixed-point first, then integer
+                    char* endPtr;
+                    double doubleValue = strtod(existingSymbol->value, &endPtr);
+                    if (*endPtr == '\0' && strchr(existingSymbol->value, '.') != NULL)
+                    {
+                        // Successfully parsed as fixed-point
+                        currentValue.type = TM32ASM_VT_FIXED_POINT;
+                        currentValue.fixedPointValue = doubleValue;
+                    }
+                    else
+                    {
+                        // Try parsing as integer
+                        int64_t intValue = strtoll(existingSymbol->value, &endPtr, 10);
+                        if (*endPtr == '\0')
+                        {
+                            currentValue.type = TM32ASM_VT_INTEGER;
+                            currentValue.integerValue = intValue;
+                        }
+                        else
+                        {
+                            TM32ASM_ReportError(preprocessor, "Invalid value format for variable '%s': %s", *varName, existingSymbol->value);
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    currentValue.type = TM32ASM_VT_INTEGER;
+                    currentValue.integerValue = 0;
+                }
+
+                TM32ASM_TokenType operatorType = nextToken->type;
+                preprocessor->currentTokenIndex++; // Skip the compound operator
+
+                // Find and evaluate the RHS expression
+                size_t exprStart = preprocessor->currentTokenIndex;
+                size_t exprEnd = TM32ASM_FindExpressionEnd(preprocessor, exprStart);
+
+                if (exprStart >= exprEnd)
+                {
+                    TM32ASM_ReportError(preprocessor, "Expected expression after compound assignment operator");
+                    TM32ASM_DestroyValue(&currentValue);
+                    return false;
+                }
+
+                TM32ASM_Value rhsValue = {0};
+                if (!TM32ASM_EvaluateExpression(preprocessor, preprocessor->inputStream, exprStart, exprEnd, &rhsValue))
+                {
+                    TM32ASM_ReportError(preprocessor, "Failed to evaluate right-hand side of compound assignment");
+                    TM32ASM_DestroyValue(&currentValue);
+                    return false;
+                }
+
+                // Perform the compound operation
+                if (!TM32ASM_PerformCompoundAssignment(&currentValue, &rhsValue, operatorType, value))
+                {
+                    TM32ASM_ReportError(preprocessor, "Failed to perform compound assignment operation");
+                    TM32ASM_DestroyValue(&currentValue);
+                    TM32ASM_DestroyValue(&rhsValue);
+                    return false;
+                }
+
+                TM32ASM_DestroyValue(&currentValue);
+                TM32ASM_DestroyValue(&rhsValue);
+                preprocessor->currentTokenIndex = exprEnd;
+            }
+        }
+    }
+
+    // If no assignment and it's an uninitialized variable, set to 0
+    if (!*hasAssignment && !isConstant)
+    {
+        *hasAssignment = true;
+        value->type = TM32ASM_VT_INTEGER;
+        value->integerValue = 0;
+    }
+
+    return true;
+}
+
+static bool TM32ASM_PerformCompoundAssignment (
+    const TM32ASM_Value*    lhs,
+    const TM32ASM_Value*    rhs,
+    TM32ASM_TokenType       operator,
+    TM32ASM_Value*          result
+)
+{
+    TM32ASM_ReturnValueIfNull(lhs, false);
+    TM32ASM_ReturnValueIfNull(rhs, false);
+    TM32ASM_ReturnValueIfNull(result, false);
+
+    // For simplicity, convert both operands to the same type for the operation
+    // We'll prioritize fixed-point over integer
+    TM32ASM_Value leftVal = *lhs;
+    TM32ASM_Value rightVal = *rhs;
+
+    // Convert to compatible types
+    if (leftVal.type == TM32ASM_VT_STRING || rightVal.type == TM32ASM_VT_STRING)
+    {
+        // String operations not supported for compound assignment
+        return false;
+    }
+
+    // Convert to fixed-point if either operand is fixed-point
+    if (leftVal.type == TM32ASM_VT_FIXED_POINT || rightVal.type == TM32ASM_VT_FIXED_POINT)
+    {
+        if (leftVal.type == TM32ASM_VT_INTEGER)
+        {
+            leftVal.type = TM32ASM_VT_FIXED_POINT;
+            leftVal.fixedPointValue = (double) leftVal.integerValue;
+        }
+        if (rightVal.type == TM32ASM_VT_INTEGER)
+        {
+            rightVal.type = TM32ASM_VT_FIXED_POINT;
+            rightVal.fixedPointValue = (double) rightVal.integerValue;
+        }
+    }
+
+    // Perform the operation
+    switch (operator)
+    {
+        case TM32ASM_TT_ASSIGN_PLUS:
+            if (leftVal.type == TM32ASM_VT_INTEGER)
+            {
+                result->type = TM32ASM_VT_INTEGER;
+                result->integerValue = leftVal.integerValue + rightVal.integerValue;
+            }
+            else
+            {
+                result->type = TM32ASM_VT_FIXED_POINT;
+                result->fixedPointValue = leftVal.fixedPointValue + rightVal.fixedPointValue;
+            }
+            break;
+
+        case TM32ASM_TT_ASSIGN_MINUS:
+            if (leftVal.type == TM32ASM_VT_INTEGER)
+            {
+                result->type = TM32ASM_VT_INTEGER;
+                result->integerValue = leftVal.integerValue - rightVal.integerValue;
+            }
+            else
+            {
+                result->type = TM32ASM_VT_FIXED_POINT;
+                result->fixedPointValue = leftVal.fixedPointValue - rightVal.fixedPointValue;
+            }
+            break;
+
+        case TM32ASM_TT_ASSIGN_TIMES:
+            if (leftVal.type == TM32ASM_VT_INTEGER)
+            {
+                result->type = TM32ASM_VT_INTEGER;
+                result->integerValue = leftVal.integerValue * rightVal.integerValue;
+            }
+            else
+            {
+                result->type = TM32ASM_VT_FIXED_POINT;
+                result->fixedPointValue = leftVal.fixedPointValue * rightVal.fixedPointValue;
+            }
+            break;
+
+        case TM32ASM_TT_ASSIGN_EXPONENT:
+            if (leftVal.type == TM32ASM_VT_INTEGER)
+            {
+                result->type = TM32ASM_VT_INTEGER;
+                result->integerValue = (int64_t) pow((double) leftVal.integerValue, (double) rightVal.integerValue);
+            }
+            else
+            {
+                result->type = TM32ASM_VT_FIXED_POINT;
+                result->fixedPointValue = pow(leftVal.fixedPointValue, rightVal.fixedPointValue);
+            }
+            break;
+
+        case TM32ASM_TT_ASSIGN_DIVIDE:
+            if (rightVal.type == TM32ASM_VT_INTEGER && rightVal.integerValue == 0)
+            {
+                return false; // Division by zero
+            }
+            if (rightVal.type == TM32ASM_VT_FIXED_POINT && rightVal.fixedPointValue == 0.0)
+            {
+                return false; // Division by zero
+            }
+
+            if (leftVal.type == TM32ASM_VT_INTEGER)
+            {
+                result->type = TM32ASM_VT_INTEGER;
+                result->integerValue = leftVal.integerValue / rightVal.integerValue;
+            }
+            else
+            {
+                result->type = TM32ASM_VT_FIXED_POINT;
+                result->fixedPointValue = leftVal.fixedPointValue / rightVal.fixedPointValue;
+            }
+            break;
+
+        case TM32ASM_TT_ASSIGN_MODULO:
+            // Modulo is only defined for integers
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            if (rightVal.integerValue == 0)
+            {
+                return false; // Division by zero
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue % rightVal.integerValue;
+            break;
+
+        case TM32ASM_TT_ASSIGN_BITWISE_AND:
+            // Bitwise operations are only defined for integers
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue & rightVal.integerValue;
+            break;
+
+        case TM32ASM_TT_ASSIGN_BITWISE_OR:
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue | rightVal.integerValue;
+            break;
+
+        case TM32ASM_TT_ASSIGN_BITWISE_XOR:
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue ^ rightVal.integerValue;
+            break;
+
+        case TM32ASM_TT_ASSIGN_LEFT_SHIFT:
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue << rightVal.integerValue;
+            break;
+
+        case TM32ASM_TT_ASSIGN_RIGHT_SHIFT:
+            if (leftVal.type != TM32ASM_VT_INTEGER || rightVal.type != TM32ASM_VT_INTEGER)
+            {
+                return false;
+            }
+            result->type = TM32ASM_VT_INTEGER;
+            result->integerValue = leftVal.integerValue >> rightVal.integerValue;
+            break;
+
+        default:
+            return false;
+    }
+
+    return true;
+}
+
+/**
+ * Substitutes a variable or constant identifier with its value.
+ *
+ * @param   preprocessor    The preprocessor.
+ * @param   token           The identifier token to potentially substitute.
+ * @return                  A new token with the substituted value, or NULL if no substitution.
+ */
+static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preprocessor, const TM32ASM_Token* token)
+{
+    if (preprocessor == NULL || token == NULL || token->type != TM32ASM_TT_IDENTIFIER)
+    {
+        return NULL;
+    }
+
+    // Look up the identifier in the symbol table
+    TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
+    if (symbol == NULL || (symbol->type != TM32ASM_ST_VARIABLE && symbol->type != TM32ASM_ST_CONSTANT))
+    {
+        return NULL; // Not a variable or constant
+    }
+
+    if (symbol->value == NULL)
+    {
+        return NULL; // No value stored
+    }
+
+    // Determine if this is an integer or fixed-point value by trying to parse
+    char* endPtr = NULL;
+    errno = 0;
+    
+    // Try parsing as an integer first
+    long long intValue = strtoll(symbol->value, &endPtr, 0);
+    if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
+    {
+        // Successfully parsed as integer - create decimal token
+        return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_DECIMAL);
+    }
+    else
+    {
+        // Try parsing as a fixed-point number
+        errno = 0;
+        double floatValue = strtod(symbol->value, &endPtr);
+        if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
+        {
+            // Successfully parsed as floating-point
+            return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_FIXED_POINT);
+        }
+        else
+        {
+            // Could not parse as number, treat as identifier (don't substitute)
+            return NULL;
+        }
+    }
+}
+
+/**
+ * @brief   Finds the matching closing parenthesis for an opening parenthesis.
+ * 
+ * @param   tokens          Token stream to search in.
+ * @param   openParenIndex  Index of the opening parenthesis.
+ * @param   endIndex        End index to search up to.
+ * 
+ * @return  Index of matching closing parenthesis, or SIZE_MAX if not found.
+ */
+static size_t TM32ASM_FindMatchingParen (
+    TM32ASM_TokenStream*    tokens,
+    size_t                  openParenIndex,
+    size_t                  endIndex
+);
+
+/**
+ * @brief   Parses function arguments from a token stream.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   tokens          Token stream containing the arguments.
+ * @param   startIndex      Start index of the arguments.
+ * @param   endIndex        End index of the arguments.
+ * @param   args            Array to store parsed argument values.
+ * @param   maxArgs         Maximum number of arguments to parse.
+ * 
+ * @return  Number of arguments parsed, or SIZE_MAX on error.
+ */
+static size_t TM32ASM_ParseFunctionArguments (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokens,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    TM32ASM_Value*          args,
+    size_t                  maxArgs
+);
+
+/**
+ * @brief   Compares two values for ordering.
+ * 
+ * @param   a   First value to compare.
+ * @param   b   Second value to compare.
+ * 
+ * @return  -1 if a < b, 0 if a == b, 1 if a > b.
+ */
+static int TM32ASM_CompareValues (
+    const TM32ASM_Value*    a,
+    const TM32ASM_Value*    b
+);
+
+/**
+ * @brief   Resolves forward references by evaluating unresolved expressions.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * 
+ * @return  true if all forward references were resolved, false otherwise.
+ */
+static bool TM32ASM_ResolveForwardReferences (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Checks if an expression contains unresolved symbols.
+ * 
+ * @param   preprocessor    The preprocessor instance.
+ * @param   expression      The expression string to check.
+ * 
+ * @return  true if the expression contains unresolved symbols, false otherwise.
+ */
+static bool TM32ASM_HasUnresolvedSymbols (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             expression
+);
+
 /* Public Functions ***********************************************************/
 
 TM32ASM_Preprocessor* TM32ASM_CreatePreprocessor ()
@@ -1084,6 +1871,12 @@ TM32ASM_TokenStream* TM32ASM_ProcessTokenStream (
     if (preprocessor->includeDepth > 0)
     {
         TM32ASM_ReportError(preprocessor, "Unclosed include block(s) at end of input");
+    }
+
+    // Resolve forward references after all symbols have been processed
+    if (!preprocessor->hasErrors)
+    {
+        TM32ASM_ResolveForwardReferences(preprocessor);
     }
 
     if (preprocessor->hasErrors)
@@ -1200,6 +1993,8 @@ bool TM32ASM_DefineVariable (
 
     symbol.type = TM32ASM_ST_VARIABLE;
     symbol.isDefined = true;
+    symbol.isResolved = true;  // Direct value assignment is considered resolved
+    symbol.expression = NULL;
 
     return TM32ASM_AddSymbol(preprocessor, &symbol);
 }
@@ -1243,6 +2038,8 @@ bool TM32ASM_DefineConstant (
 
     symbol.type = TM32ASM_ST_CONSTANT;
     symbol.isDefined = true;
+    symbol.isResolved = true;  // Direct value assignment is considered resolved
+    symbol.expression = NULL;
 
     return TM32ASM_AddSymbol(preprocessor, &symbol);
 }
@@ -1302,6 +2099,8 @@ bool TM32ASM_DefineSimpleMacro (
 
     symbol.type = TM32ASM_ST_SIMPLE_MACRO;
     symbol.isDefined = true;
+    symbol.isResolved = true;  // Macros are always resolved
+    symbol.expression = NULL;
 
     return TM32ASM_AddSymbol(preprocessor, &symbol);
 }
@@ -1315,6 +2114,13 @@ void TM32ASM_SetTreatWarningsAsErrors (
     {
         preprocessor->treatWarningsAsErrors = treatWarningsAsErrors;
     }
+}
+
+bool TM32ASM_ResolveAllForwardReferences (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    return TM32ASM_ResolveForwardReferences(preprocessor);
 }
 
 bool TM32ASM_HasErrors (
@@ -1608,6 +2414,79 @@ char* TM32ASM_ValueToString (
         default:
             return NULL;
     }
+}
+
+bool TM32ASM_ViewVariable (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             name,
+    TM32ASM_Value*          result
+)
+{
+    if (preprocessor == NULL || name == NULL || result == NULL)
+    {
+        return false;
+    }
+
+    // Find the symbol in the symbol table
+    TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, name);
+    if (symbol == NULL || !symbol->isDefined)
+    {
+        return false; // Symbol not found or not defined
+    }
+
+    // Only variables and constants can be viewed
+    if (symbol->type != TM32ASM_ST_VARIABLE && symbol->type != TM32ASM_ST_CONSTANT)
+    {
+        return false; // Not a variable or constant
+    }
+
+    // Check if the symbol has a value
+    if (symbol->value == NULL)
+    {
+        // Return a default value (0) for variables with no explicit value
+        *result = TM32ASM_CreateIntegerValue(0);
+        return true;
+    }
+
+    // Try to parse the value as different types
+    char* endPtr;
+    
+    // Try integer first (including different bases)
+    int64_t intValue = strtoll(symbol->value, &endPtr, 0);
+    if (*endPtr == '\0')
+    {
+        *result = TM32ASM_CreateIntegerValue(intValue);
+        return true;
+    }
+
+    // Try fixed-point
+    double doubleValue = strtod(symbol->value, &endPtr);
+    if (*endPtr == '\0')
+    {
+        *result = TM32ASM_CreateFixedPointValue(doubleValue);
+        return true;
+    }
+
+    // If neither integer nor fixed-point, treat as string
+    *result = TM32ASM_CreateStringValue(symbol->value);
+    return true;
+}
+
+const TM32ASM_Symbol* TM32ASM_GetSymbolTable (
+    const TM32ASM_Preprocessor* preprocessor,
+    size_t*                     symbolCount
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, NULL);
+
+    // Optionally return the symbol count
+    if (symbolCount != NULL)
+    {
+        *symbolCount = preprocessor->symbolCount;
+    }
+
+    // Return read-only access to the symbol table
+    return preprocessor->symbols;
 }
 
 bool TM32ASM_EvaluateExpression (
@@ -2186,6 +3065,16 @@ static bool TM32ASM_EvaluatePrimary (
 
             case TM32ASM_TT_IDENTIFIER:
             {
+                // Check if this is a function call
+                if (startIndex + 2 < endIndex)
+                {
+                    TM32ASM_Token* nextToken = TM32ASM_GetTokenAt(tokens, startIndex + 1);
+                    if (nextToken != NULL && nextToken->type == TM32ASM_TT_OPEN_PARENTHESIS)
+                    {
+                        return TM32ASM_EvaluateFunction(preprocessor, tokens, startIndex, endIndex, result);
+                    }
+                }
+
                 // Look up symbol in symbol table
                 TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
                 if (symbol != NULL && symbol->isDefined)
@@ -2225,6 +3114,346 @@ static bool TM32ASM_EvaluatePrimary (
     fprintf(stderr, "Error: Invalid expression\n");
     preprocessor->hasErrors = true;
     return false;
+}
+
+bool TM32ASM_EvaluateFunction (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokens,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    TM32ASM_Value*          result
+)
+{
+    if (preprocessor == NULL || tokens == NULL || result == NULL || startIndex >= endIndex)
+    {
+        return false;
+    }
+
+    TM32ASM_Token* funcNameToken = TM32ASM_GetTokenAt(tokens, startIndex);
+    TM32ASM_Token* openParenToken = TM32ASM_GetTokenAt(tokens, startIndex + 1);
+    
+    if (funcNameToken == NULL || funcNameToken->type != TM32ASM_TT_IDENTIFIER ||
+        openParenToken == NULL || openParenToken->type != TM32ASM_TT_OPEN_PARENTHESIS)
+    {
+        return false;
+    }
+
+    // Find matching closing parenthesis
+    size_t closeParenIndex = TM32ASM_FindMatchingParen(tokens, startIndex + 1, endIndex);
+    if (closeParenIndex == SIZE_MAX)
+    {
+        fprintf(stderr, "Error: Missing closing parenthesis in function call\n");
+        preprocessor->hasErrors = true;
+        return false;
+    }
+
+    const char* funcName = funcNameToken->lexeme;
+    
+    // Parse function arguments
+    TM32ASM_Value args[16]; // Support up to 16 arguments
+    size_t argCount = 0;
+    
+    if (closeParenIndex > startIndex + 2) // Has arguments
+    {
+        argCount = TM32ASM_ParseFunctionArguments(preprocessor, tokens, startIndex + 2, closeParenIndex, args, 16);
+        if (argCount == SIZE_MAX)
+        {
+            return false; // Error already reported
+        }
+    }
+
+    // Mathematical functions
+    if (strcmp(funcName, "abs") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: abs() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type == TM32ASM_VT_INTEGER)
+        {
+            *result = TM32ASM_CreateIntegerValue(args[0].intValue < 0 ? -args[0].intValue : args[0].intValue);
+        }
+        else if (args[0].type == TM32ASM_VT_FIXED_POINT)
+        {
+            *result = TM32ASM_CreateFixedPointValue(args[0].fixedPointValue < 0.0 ? -args[0].fixedPointValue : args[0].fixedPointValue);
+        }
+        else
+        {
+            fprintf(stderr, "Error: abs() requires numeric argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        return true;
+    }
+    else if (strcmp(funcName, "min") == 0)
+    {
+        if (argCount < 2)
+        {
+            fprintf(stderr, "Error: min() requires at least 2 arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        TM32ASM_Value minVal = args[0];
+        for (size_t i = 1; i < argCount; i++)
+        {
+            if (TM32ASM_CompareValues(&args[i], &minVal) < 0)
+            {
+                minVal = args[i];
+            }
+        }
+        *result = minVal;
+        return true;
+    }
+    else if (strcmp(funcName, "max") == 0)
+    {
+        if (argCount < 2)
+        {
+            fprintf(stderr, "Error: max() requires at least 2 arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        TM32ASM_Value maxVal = args[0];
+        for (size_t i = 1; i < argCount; i++)
+        {
+            if (TM32ASM_CompareValues(&args[i], &maxVal) > 0)
+            {
+                maxVal = args[i];
+            }
+        }
+        *result = maxVal;
+        return true;
+    }
+    else if (strcmp(funcName, "sqrt") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: sqrt() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        double val = 0.0;
+        if (args[0].type == TM32ASM_VT_INTEGER)
+        {
+            val = (double)args[0].intValue;
+        }
+        else if (args[0].type == TM32ASM_VT_FIXED_POINT)
+        {
+            val = args[0].fixedPointValue;
+        }
+        else
+        {
+            fprintf(stderr, "Error: sqrt() requires numeric argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (val < 0.0)
+        {
+            fprintf(stderr, "Error: sqrt() of negative number\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateFixedPointValue(sqrt(val));
+        return true;
+    }
+    else if (strcmp(funcName, "pow") == 0)
+    {
+        if (argCount != 2)
+        {
+            fprintf(stderr, "Error: pow() requires exactly 2 arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        double base = 0.0, exponent = 0.0;
+        
+        if (args[0].type == TM32ASM_VT_INTEGER) base = (double)args[0].intValue;
+        else if (args[0].type == TM32ASM_VT_FIXED_POINT) base = args[0].fixedPointValue;
+        else
+        {
+            fprintf(stderr, "Error: pow() requires numeric arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[1].type == TM32ASM_VT_INTEGER) exponent = (double)args[1].intValue;
+        else if (args[1].type == TM32ASM_VT_FIXED_POINT) exponent = args[1].fixedPointValue;
+        else
+        {
+            fprintf(stderr, "Error: pow() requires numeric arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateFixedPointValue(pow(base, exponent));
+        return true;
+    }
+    // Byte manipulation functions
+    else if (strcmp(funcName, "high") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: high() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_INTEGER)
+        {
+            fprintf(stderr, "Error: high() requires integer argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateIntegerValue((args[0].intValue >> 8) & 0xFF);
+        return true;
+    }
+    else if (strcmp(funcName, "low") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: low() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_INTEGER)
+        {
+            fprintf(stderr, "Error: low() requires integer argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateIntegerValue(args[0].intValue & 0xFF);
+        return true;
+    }
+    else if (strcmp(funcName, "word") == 0)
+    {
+        if (argCount != 2)
+        {
+            fprintf(stderr, "Error: word() requires exactly 2 arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_INTEGER || args[1].type != TM32ASM_VT_INTEGER)
+        {
+            fprintf(stderr, "Error: word() requires integer arguments\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        int64_t high = (args[0].intValue & 0xFF) << 8;
+        int64_t low = args[1].intValue & 0xFF;
+        *result = TM32ASM_CreateIntegerValue(high | low);
+        return true;
+    }
+    // String functions
+    else if (strcmp(funcName, "strlen") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: strlen() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_STRING)
+        {
+            fprintf(stderr, "Error: strlen() requires string argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateIntegerValue((int64_t)strlen(args[0].stringValue));
+        return true;
+    }
+    else if (strcmp(funcName, "ord") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: ord() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type == TM32ASM_VT_CHARACTER)
+        {
+            *result = TM32ASM_CreateIntegerValue((int64_t)args[0].characterValue);
+            return true;
+        }
+        else if (args[0].type == TM32ASM_VT_STRING && strlen(args[0].stringValue) > 0)
+        {
+            *result = TM32ASM_CreateIntegerValue((int64_t)args[0].stringValue[0]);
+            return true;
+        }
+        else
+        {
+            fprintf(stderr, "Error: ord() requires character or non-empty string argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+    }
+    else if (strcmp(funcName, "chr") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: chr() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_INTEGER)
+        {
+            fprintf(stderr, "Error: chr() requires integer argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].intValue < 0 || args[0].intValue > 255)
+        {
+            fprintf(stderr, "Error: chr() argument out of range (0-255)\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        *result = TM32ASM_CreateCharacterValue((char)args[0].intValue);
+        return true;
+    }
+    // Conditional functions
+    else if (strcmp(funcName, "defined") == 0)
+    {
+        if (argCount != 1)
+        {
+            fprintf(stderr, "Error: defined() requires exactly 1 argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        if (args[0].type != TM32ASM_VT_IDENTIFIER)
+        {
+            fprintf(stderr, "Error: defined() requires identifier argument\n");
+            preprocessor->hasErrors = true;
+            return false;
+        }
+        
+        TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, args[0].stringValue);
+        *result = TM32ASM_CreateIntegerValue(symbol != NULL && symbol->isDefined ? 1 : 0);
+        return true;
+    }
+    else
+    {
+        fprintf(stderr, "Error: Unknown function '%s'\n", funcName);
+        preprocessor->hasErrors = true;
+        return false;
+    }
 }
 
 /* Helper Functions ***********************************************************/
@@ -2455,11 +3684,23 @@ static bool TM32ASM_ApplyBinaryOperation (
             break;
 
         case TM32ASM_TT_DIVIDE:
-            if (rightInt == 0 || (useFloating && rightFloat == 0.0))
+            if (useFloating)
             {
-                fprintf(stderr, "Error: Division by zero\n");
-                preprocessor->hasErrors = true;
-                return false;
+                if (rightFloat == 0.0)
+                {
+                    fprintf(stderr, "Error: Division by zero\n");
+                    preprocessor->hasErrors = true;
+                    return false;
+                }
+            }
+            else
+            {
+                if (rightInt == 0)
+                {
+                    fprintf(stderr, "Error: Division by zero\n");
+                    preprocessor->hasErrors = true;
+                    return false;
+                }
             }
             if (useFloating)
             {
@@ -2871,4 +4112,284 @@ static int TM32ASM_FindMatchingParenthesis (
     }
 
     return -1;
+}
+
+static size_t TM32ASM_FindMatchingParen (
+    TM32ASM_TokenStream*    tokens,
+    size_t                  openParenIndex,
+    size_t                  endIndex
+)
+{
+    int parenDepth = 1;
+    
+    for (size_t i = openParenIndex + 1; i < endIndex; i++)
+    {
+        TM32ASM_Token* token = TM32ASM_GetTokenAt(tokens, i);
+        if (token == NULL) continue;
+        
+        if (token->type == TM32ASM_TT_OPEN_PARENTHESIS)
+        {
+            parenDepth++;
+        }
+        else if (token->type == TM32ASM_TT_CLOSE_PARENTHESIS)
+        {
+            parenDepth--;
+            if (parenDepth == 0)
+            {
+                return i;
+            }
+        }
+    }
+    
+    return SIZE_MAX; // No matching parenthesis found
+}
+
+static size_t TM32ASM_ParseFunctionArguments (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokens,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    TM32ASM_Value*          args,
+    size_t                  maxArgs
+)
+{
+    if (startIndex >= endIndex)
+    {
+        return 0; // No arguments
+    }
+    
+    size_t argCount = 0;
+    size_t argStart = startIndex;
+    int parenDepth = 0;
+    
+    for (size_t i = startIndex; i <= endIndex; i++)
+    {
+        TM32ASM_Token* token = (i < endIndex) ? TM32ASM_GetTokenAt(tokens, i) : NULL;
+        
+        if (token != NULL)
+        {
+            if (token->type == TM32ASM_TT_OPEN_PARENTHESIS)
+            {
+                parenDepth++;
+            }
+            else if (token->type == TM32ASM_TT_CLOSE_PARENTHESIS)
+            {
+                parenDepth--;
+            }
+        }
+        
+        // Found argument separator or end of arguments
+        if ((token != NULL && token->type == TM32ASM_TT_COMMA && parenDepth == 0) || i == endIndex)
+        {
+            if (argCount >= maxArgs)
+            {
+                fprintf(stderr, "Error: Too many function arguments (max %zu)\n", maxArgs);
+                preprocessor->hasErrors = true;
+                return SIZE_MAX;
+            }
+            
+            // Evaluate the argument expression
+            if (!TM32ASM_EvaluateExpression(preprocessor, tokens, argStart, i, &args[argCount]))
+            {
+                return SIZE_MAX; // Error already reported
+            }
+            
+            argCount++;
+            argStart = i + 1;
+        }
+    }
+    
+    return argCount;
+}
+
+static int TM32ASM_CompareValues (
+    const TM32ASM_Value*    a,
+    const TM32ASM_Value*    b
+)
+{
+    if (a == NULL || b == NULL)
+    {
+        return 0;
+    }
+    
+    // Convert both values to the same type for comparison
+    if (a->type == TM32ASM_VT_INTEGER && b->type == TM32ASM_VT_INTEGER)
+    {
+        if (a->intValue < b->intValue) return -1;
+        if (a->intValue > b->intValue) return 1;
+        return 0;
+    }
+    else if (a->type == TM32ASM_VT_FIXED_POINT && b->type == TM32ASM_VT_FIXED_POINT)
+    {
+        if (a->fixedPointValue < b->fixedPointValue) return -1;
+        if (a->fixedPointValue > b->fixedPointValue) return 1;
+        return 0;
+    }
+    else
+    {
+        // Convert to double for mixed comparisons
+        double aVal = (a->type == TM32ASM_VT_INTEGER) ? (double)a->intValue : a->fixedPointValue;
+        double bVal = (b->type == TM32ASM_VT_INTEGER) ? (double)b->intValue : b->fixedPointValue;
+        
+        if (aVal < bVal) return -1;
+        if (aVal > bVal) return 1;
+        return 0;
+    }
+}
+
+TM32ASM_Value TM32ASM_CreateCharacterValue (
+    char value
+)
+{
+    TM32ASM_Value result;
+    result.type = TM32ASM_VT_CHARACTER;
+    result.characterValue = value;
+    return result;
+}
+
+static bool TM32ASM_ResolveForwardReferences (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    if (preprocessor == NULL)
+    {
+        return false;
+    }
+
+    // For now, this is a placeholder implementation
+    // Forward reference resolution would be implemented here
+    // when we have a proper tokenizer for expression strings
+    
+    // Check if we have any unresolved symbols and report them
+    for (size_t i = 0; i < preprocessor->symbolCount; i++)
+    {
+        TM32ASM_Symbol* symbol = &preprocessor->symbols[i];
+        if (symbol->isDefined && !symbol->isResolved && symbol->expression != NULL)
+        {
+            fprintf(stderr, "Warning: Symbol '%s' has unresolved expression: %s\n", 
+                   symbol->name, symbol->expression);
+            
+            // For now, just mark as resolved with empty value
+            symbol->isResolved = true;
+            if (symbol->value == NULL)
+            {
+                symbol->value = TM32ASM_Create(2, char);
+                if (symbol->value != NULL)
+                {
+                    strcpy(symbol->value, "0");
+                }
+            }
+        }
+    }
+
+    return !preprocessor->hasErrors;
+}
+
+bool TM32ASM_DefineVariableWithExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             name,
+    const char*             expression
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(name, false);
+
+    // Check if the symbol already exists
+    TM32ASM_Symbol* existing = TM32ASM_FindSymbol(preprocessor, name);
+    if (existing != NULL)
+    {
+        if (existing->type != TM32ASM_ST_VARIABLE)
+        {
+            TM32ASM_ReportError(preprocessor, "Symbol '%s' is already defined as a different type", name);
+            return false;
+        }
+
+        // Update the existing variable
+        TM32ASM_Destroy(existing->value);
+        TM32ASM_Destroy(existing->expression);
+        existing->value = NULL;
+        existing->expression = NULL;
+        existing->isResolved = false;
+
+        if (expression != NULL)
+        {
+            // Store for later resolution - for now we'll use a simpler approach
+            existing->expression = TM32ASM_Create(strlen(expression) + 1, char);
+            if (existing->expression != NULL)
+            {
+                strcpy(existing->expression, expression);
+            }
+            existing->isResolved = false;
+        }
+        else
+        {
+            existing->value = NULL;
+            existing->isResolved = true;
+        }
+
+        existing->isDefined = true;
+        return true;
+    }
+
+    // Create a new symbol
+    TM32ASM_Symbol symbol = {0};
+    symbol.name = TM32ASM_Create(strlen(name) + 1, char);
+    if (symbol.name == NULL)
+    {
+        TM32ASM_LogErrno("Could not allocate memory for variable name");
+        return false;
+    }
+    strcpy(symbol.name, name);
+
+    symbol.type = TM32ASM_ST_VARIABLE;
+    symbol.isDefined = true;
+    symbol.isResolved = true;  // Will be set appropriately below
+    symbol.expression = NULL;
+    symbol.value = NULL;
+
+    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+    {
+        TM32ASM_Destroy(symbol.name);
+        return false;
+    }
+
+    TM32ASM_Symbol* newSymbol = TM32ASM_FindSymbol(preprocessor, name);
+    if (newSymbol == NULL)
+    {
+        return false;
+    }
+
+    if (expression != NULL)
+    {
+        // Store for later resolution - for now we'll use a simpler approach
+        newSymbol->expression = TM32ASM_Create(strlen(expression) + 1, char);
+        if (newSymbol->expression != NULL)
+        {
+            strcpy(newSymbol->expression, expression);
+        }
+        newSymbol->isResolved = false;
+    }
+    else
+    {
+        newSymbol->value = NULL;
+        newSymbol->isResolved = true;
+    }
+
+    newSymbol->isDefined = true;
+    return true;
+}
+
+static bool TM32ASM_HasUnresolvedSymbols (
+    TM32ASM_Preprocessor*   preprocessor,
+    const char*             expression
+)
+{
+    if (preprocessor == NULL || expression == NULL)
+    {
+        return false;
+    }
+
+    // For now, we'll do a simple string search for identifiers
+    // This is a simplified implementation
+    return false; // Placeholder - will be implemented when needed
 }
