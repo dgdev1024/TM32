@@ -24,13 +24,14 @@ static void TM32ASM_PrintUsage (const char* programName)
 {
     printf("Usage: %s [options] <source_file.asm> [-o <output_file.o>]\n", programName);
     printf("Options:\n");
-    printf("  -l, --lex-only        Perform only lexical analysis\n");
-    printf("  -r, --preprocess-only Perform lexical analysis and preprocessing only\n");
-    printf("  -p, --parse-only      Perform lexical analysis, preprocessing and parsing only\n");
-    printf("      --variables       List all preprocessor variables (use with --preprocess-only)\n");
-    printf("  -o, --output-file     Specify output file name\n");
-    printf("  -v, --version         Display version information\n");
-    printf("  -h, --help            Display this help message\n");
+    printf("  -l, --lex-only                    Perform only lexical analysis\n");
+    printf("  -r, --preprocess-only             Perform lexical analysis and preprocessing only\n");
+    printf("  -p, --parse-only                  Perform lexical analysis, preprocessing and parsing only\n");
+    printf("      --variables                   List all preprocessor variables (use with --preprocess-only)\n");
+    printf("      --output-preprocessed <file>  Write preprocessed source to file (use with --preprocess-only)\n");
+    printf("  -o, --output-file                 Specify output file name\n");
+    printf("  -v, --version                     Display version information\n");
+    printf("  -h, --help                        Display this help message\n");
 }
 
 static void TM32ASM_PrintVersion ()
@@ -135,6 +136,159 @@ static void TM32ASM_PrintPreprocessorVariables (TM32ASM_Preprocessor* preprocess
     printf("=== END PREPROCESSOR VARIABLES ===\n");
 }
 
+static bool TM32ASM_WritePreprocessedTokensToFile (TM32ASM_TokenStream* tokenStream, const char* filename)
+{
+    TM32ASM_ReturnValueIfNull(tokenStream, false);
+    TM32ASM_ReturnValueIfNull(filename, false);
+    
+    FILE* outputFile = fopen(filename, "w");
+    if (outputFile == NULL)
+    {
+        TM32ASM_LogError("Failed to open output file: %s", filename);
+        return false;
+    }
+    
+    uint32_t currentLine = 0;
+    const char* currentFilename = NULL;
+    bool needsSpace = false;
+    bool isStartOfLine = true;
+    
+    for (size_t i = 0; i < tokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[i];
+        if (token != NULL && token->lexeme != NULL)
+        {
+            // Check if we need a newline based on line number changes
+            bool needsNewline = false;
+            if (token->line != currentLine || 
+                (currentFilename != NULL && token->filename != NULL && strcmp(currentFilename, token->filename) != 0))
+            {
+                needsNewline = !isStartOfLine; // Don't add newline if already at start of line
+                currentLine = token->line;
+                currentFilename = token->filename;
+            }
+            
+            // Add newline if needed (line changed)
+            if (needsNewline)
+            {
+                fprintf(outputFile, "\n");
+                isStartOfLine = true;
+                needsSpace = false;
+            }
+            
+            // Handle different token types with appropriate formatting
+            switch (token->type)
+            {
+                case TM32ASM_TT_DIRECTIVE:
+                    if (!isStartOfLine && needsSpace)
+                    {
+                        fprintf(outputFile, " ");
+                    }
+                    fprintf(outputFile, "%s", token->lexeme);
+                    needsSpace = true;
+                    isStartOfLine = false;
+                    break;
+                    
+                case TM32ASM_TT_COLON:
+                    fprintf(outputFile, "%s", token->lexeme);
+                    needsSpace = false;
+                    isStartOfLine = false;
+                    break;
+                    
+                case TM32ASM_TT_COMMA:
+                    fprintf(outputFile, "%s ", token->lexeme);
+                    needsSpace = false;
+                    isStartOfLine = false;
+                    break;
+                    
+                case TM32ASM_TT_IDENTIFIER:
+                    // Check if this is a label (followed by colon)
+                    if (i + 1 < tokenStream->tokenCount && 
+                        tokenStream->tokens[i + 1] != NULL && 
+                        tokenStream->tokens[i + 1]->type == TM32ASM_TT_COLON)
+                    {
+                        // This is a label - start on new line if not already
+                        if (!isStartOfLine)
+                        {
+                            fprintf(outputFile, "\n");
+                            isStartOfLine = true;
+                        }
+                        fprintf(outputFile, "%s", token->lexeme);
+                        needsSpace = false;
+                        isStartOfLine = false;
+                    }
+                    else
+                    {
+                        // Regular identifier
+                        if (needsSpace && !isStartOfLine)
+                        {
+                            fprintf(outputFile, " ");
+                        }
+                        fprintf(outputFile, "%s", token->lexeme);
+                        needsSpace = true;
+                        isStartOfLine = false;
+                    }
+                    break;
+                    
+                case TM32ASM_TT_INSTRUCTION:
+                    // Instructions should be properly indented
+                    if (isStartOfLine)
+                    {
+                        fprintf(outputFile, "    %s", token->lexeme); // 4-space indent
+                    }
+                    else
+                    {
+                        if (needsSpace)
+                        {
+                            fprintf(outputFile, " ");
+                        }
+                        fprintf(outputFile, "%s", token->lexeme);
+                    }
+                    needsSpace = true;
+                    isStartOfLine = false;
+                    break;
+                    
+                case TM32ASM_TT_REGISTER:
+                case TM32ASM_TT_CONDITION:
+                case TM32ASM_TT_BINARY:
+                case TM32ASM_TT_OCTAL:
+                case TM32ASM_TT_DECIMAL:
+                case TM32ASM_TT_HEXADECIMAL:
+                case TM32ASM_TT_FIXED_POINT:
+                case TM32ASM_TT_CHARACTER:
+                case TM32ASM_TT_STRING:
+                    if (needsSpace && !isStartOfLine)
+                    {
+                        fprintf(outputFile, " ");
+                    }
+                    fprintf(outputFile, "%s", token->lexeme);
+                    needsSpace = true;
+                    isStartOfLine = false;
+                    break;
+                    
+                default:
+                    if (needsSpace && !isStartOfLine)
+                    {
+                        fprintf(outputFile, " ");
+                    }
+                    fprintf(outputFile, "%s", token->lexeme);
+                    needsSpace = true;
+                    isStartOfLine = false;
+                    break;
+            }
+        }
+    }
+    
+    // Add final newline
+    if (!isStartOfLine)
+    {
+        fprintf(outputFile, "\n");
+    }
+    
+    fclose(outputFile);
+    return true;
+}
+
 /* Private Functions **********************************************************/
 
 int main (int argc, const char** argv)
@@ -168,6 +322,20 @@ int main (int argc, const char** argv)
     bool preprocessOnly = TM32ASM_HasArgumentKey("preprocess-only", 'r') != 0;
     bool parseOnly = TM32ASM_HasArgumentKey("parse-only", 'p') != 0;
     bool showVariables = TM32ASM_HasArgumentKey("variables", '\0') != 0;
+    const char* outputPreprocessedFile = TM32ASM_GetArgumentValue("output-preprocessed", '\0', 0);
+    
+    // Validate --output-preprocessed option usage
+    if (outputPreprocessedFile != NULL && !preprocessOnly)
+    {
+        TM32ASM_LogError("--output-preprocessed can only be used with --preprocess-only");
+        return 1;
+    }
+    
+    if (outputPreprocessedFile != NULL && showVariables)
+    {
+        TM32ASM_LogError("--output-preprocessed cannot be used with --variables");
+        return 1;
+    }
     
     // Create lexer
     TM32ASM_Lexer* lexer = TM32ASM_CreateLexer();
@@ -230,6 +398,19 @@ int main (int argc, const char** argv)
         if (showVariables)
         {
             TM32ASM_PrintPreprocessorVariables(preprocessor);
+        }
+        // If --output-preprocessed is provided, write to file
+        else if (outputPreprocessedFile != NULL)
+        {
+            if (!TM32ASM_WritePreprocessedTokensToFile(processedStream, outputPreprocessedFile))
+            {
+                TM32ASM_LogError("Failed to write preprocessed output to file: %s", outputPreprocessedFile);
+                TM32ASM_DestroyTokenStream(processedStream);
+                TM32ASM_DestroyPreprocessor(preprocessor);
+                TM32ASM_DestroyLexer(lexer);
+                return 1;
+            }
+            printf("Preprocessed source written to: %s\n", outputPreprocessedFile);
         }
         else
         {

@@ -47,9 +47,15 @@ The following options are available for the `tm32asm` command:
 - `-p, --parse-only`: Perform lexical analysis, preprocessing, and parsing on
     the source file, and output the abstract syntax tree (AST) to standard output.
     No code generation is performed.
-- `-v, --variables`: If `--preprocess-only` is specified, lists all variables and
+- `--variables`: If `--preprocess-only` is specified, lists all variables and
     constants declared by the preprocessor. If `--preprocess-only` is not specified,
     this option is ignored.
+- `--output-preprocessed <output_file>`: If `--preprocess-only` is specified, the
+    preprocessed source code will be written to the specified output file. The
+    `<output_file>` is required. If not provided, an error will be raised. If
+    the specified output file cannot be created or written to, an error will
+    also be raised. If `--preprocess-only` is not specified, or if `--variables`
+    is specified, this option is ignored.
 - `-o <output_file.o>, --output-file <output_file.o>`: Specify the name of the
     output object file. If not provided, the output file will have the same base
     name as the source file with a `.o` extension. This option is ignored if

@@ -198,6 +198,50 @@ static bool TM32ASM_PerformCompoundAssignment (
 );
 
 /**
+ * @brief   Processes a '.if' directive to begin conditional assembly.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessIfDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Processes an '.else' directive to switch conditional assembly state.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessElseDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Processes an '.endif' directive to end conditional assembly.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessEndifDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
+ * @brief   Processes an '.elseif' directive for conditional assembly.
+ * 
+ * @param   preprocessor    A pointer to the TM32ASM preprocessor.
+ * 
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessElseifDirective (
+    TM32ASM_Preprocessor*   preprocessor
+);
+
+/**
  * @brief   Checks if the current conditional state allows token processing.
  * 
  * @param   preprocessor    A pointer to the TM32ASM preprocessor.
@@ -853,7 +897,7 @@ static bool TM32ASM_ProcessToken (
             const char* lexeme = token->lexeme;
             if (lexeme != NULL && 
                 (strcmp(lexeme, ".if") == 0 || strcmp(lexeme, ".ifdef") == 0 || 
-                 strcmp(lexeme, ".ifndef") == 0 || strcmp(lexeme, ".elif") == 0 || 
+                 strcmp(lexeme, ".ifndef") == 0 || strcmp(lexeme, ".elseif") == 0 || 
                  strcmp(lexeme, ".else") == 0 || strcmp(lexeme, ".endif") == 0))
             {
                 return TM32ASM_ProcessDirective(preprocessor, token);
@@ -1049,6 +1093,18 @@ static bool TM32ASM_ProcessDirective (
         case TM32ASM_DT_CONST:
             return TM32ASM_ProcessConstDirective(preprocessor);
 
+        case TM32ASM_DT_IF:
+            return TM32ASM_ProcessIfDirective(preprocessor);
+
+        case TM32ASM_DT_ELSE:
+            return TM32ASM_ProcessElseDirective(preprocessor);
+
+        case TM32ASM_DT_ENDIF:
+            return TM32ASM_ProcessEndifDirective(preprocessor);
+
+        case TM32ASM_DT_ELSEIF:
+            return TM32ASM_ProcessElseifDirective(preprocessor);
+
         default:
             // For other directives, advance the token index and pass through to output
             preprocessor->currentTokenIndex++;
@@ -1169,6 +1225,9 @@ static bool TM32ASM_ProcessLetDirective (
 {
     TM32ASM_ReturnValueIfNull(preprocessor, false);
 
+    // Store directive start position for output stream
+    size_t directiveStartIndex = preprocessor->currentTokenIndex;
+
     // Skip past the .let directive token
     preprocessor->currentTokenIndex++;
 
@@ -1182,6 +1241,9 @@ static bool TM32ASM_ProcessLetDirective (
         TM32ASM_DestroyValue(&value);
         return false;
     }
+
+    // Store directive end position for output stream
+    size_t directiveEndIndex = preprocessor->currentTokenIndex;
 
     // Convert value to string for storage
     char* valueString = NULL;
@@ -1200,6 +1262,10 @@ static bool TM32ASM_ProcessLetDirective (
     // Define the variable
     bool success = TM32ASM_DefineVariable(preprocessor, varName, valueString);
     
+    // Note: .let and .const directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // substituting variable/constant values directly into the code.
+    
     TM32ASM_Destroy(varName);
     TM32ASM_Destroy(valueString);
     TM32ASM_DestroyValue(&value);
@@ -1213,12 +1279,18 @@ static bool TM32ASM_ProcessConstDirective (
 {
     TM32ASM_ReturnValueIfNull(preprocessor, false);
 
+    // Store directive start position for output stream
+    size_t directiveStartIndex = preprocessor->currentTokenIndex;
+    
     // Skip past the .const directive token
     preprocessor->currentTokenIndex++;
 
     char* varName = NULL;
     bool hasAssignment = false;
     TM32ASM_Value value = {0};
+    
+    // Store current position to find directive end
+    size_t beforeParseIndex = preprocessor->currentTokenIndex;
 
     if (!TM32ASM_ParseVariableDeclaration(preprocessor, true, &varName, &hasAssignment, &value))
     {
@@ -1235,6 +1307,9 @@ static bool TM32ASM_ProcessConstDirective (
         return false;
     }
 
+    // Store directive end position for output stream
+    size_t directiveEndIndex = preprocessor->currentTokenIndex;
+
     // Convert value to string for storage
     char* valueString = TM32ASM_ValueToString(&value);
     if (valueString == NULL)
@@ -1248,11 +1323,264 @@ static bool TM32ASM_ProcessConstDirective (
     // Define the constant
     bool success = TM32ASM_DefineConstant(preprocessor, varName, valueString);
     
+    // Note: .let and .const directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // substituting variable/constant values directly into the code.
+    
     TM32ASM_Destroy(varName);
     TM32ASM_Destroy(valueString);
     TM32ASM_DestroyValue(&value);
 
     return success;
+}
+
+static bool TM32ASM_ProcessIfDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Store the directive token before advancing
+    TM32ASM_Token* directiveToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+
+    // Skip past the .if directive token
+    preprocessor->currentTokenIndex++;
+
+    // Find the end of the conditional expression
+    size_t startIndex = preprocessor->currentTokenIndex;
+    size_t endIndex = TM32ASM_FindExpressionEnd(preprocessor, startIndex);
+
+    if (startIndex >= endIndex)
+    {
+        TM32ASM_ReportError(preprocessor, "Expected expression after .if directive");
+        return false;
+    }
+
+    // Evaluate the conditional expression
+    TM32ASM_Value conditionValue = {0};
+    if (!TM32ASM_EvaluateExpression(preprocessor, preprocessor->inputStream, startIndex, endIndex, &conditionValue))
+    {
+        TM32ASM_ReportError(preprocessor, "Failed to evaluate .if condition expression");
+        return false;
+    }
+
+    // Convert to boolean: non-zero values are true
+    bool condition = false;
+    if (conditionValue.type == TM32ASM_VT_INTEGER && conditionValue.integerValue != 0)
+    {
+        condition = true;
+    }
+    else if (conditionValue.type == TM32ASM_VT_FIXED_POINT && conditionValue.fixedPointValue != 0.0)
+    {
+        condition = true;
+    }
+    
+    TM32ASM_DestroyValue(&conditionValue);
+
+    // Update current token index to past the expression
+    preprocessor->currentTokenIndex = endIndex;
+
+    // Check if we need to expand the conditional stack
+    if (preprocessor->conditionalDepth >= preprocessor->conditionalCapacity)
+    {
+        size_t newCapacity = preprocessor->conditionalCapacity * 2;
+        if (newCapacity == 0) newCapacity = 8;
+        
+        TM32ASM_ConditionalContext* newStack = TM32ASM_Resize(
+            preprocessor->conditionalStack, 
+            newCapacity, 
+            TM32ASM_ConditionalContext
+        );
+        
+        if (newStack == NULL)
+        {
+            TM32ASM_ReportError(preprocessor, "Failed to expand conditional stack");
+            return false;
+        }
+        
+        preprocessor->conditionalStack = newStack;
+        preprocessor->conditionalCapacity = newCapacity;
+    }
+
+    // Push new conditional context onto the stack
+    TM32ASM_ConditionalContext* newContext = &preprocessor->conditionalStack[preprocessor->conditionalDepth];
+    newContext->state = condition ? TM32ASM_CS_ACTIVE : TM32ASM_CS_SKIPPING;
+    newContext->hasElse = false;
+    newContext->conditionMet = condition;  // Track if any condition in this if/elseif chain has been met
+    
+    preprocessor->conditionalDepth++;
+
+    // Note: Conditional directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // leaving only the final processed content.
+
+    return true;
+}
+
+static bool TM32ASM_ProcessElseDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Store the directive token before advancing
+    TM32ASM_Token* directiveToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+
+    // Skip past the .else directive token
+    preprocessor->currentTokenIndex++;
+
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalDepth == 0)
+    {
+        TM32ASM_ReportError(preprocessor, ".else without matching .if");
+        return false;
+    }
+
+    TM32ASM_ConditionalContext* currentContext = &preprocessor->conditionalStack[preprocessor->conditionalDepth - 1];
+    
+    // Check if we already have an else
+    if (currentContext->hasElse)
+    {
+        TM32ASM_ReportError(preprocessor, "Multiple .else directives in same .if block");
+        return false;
+    }
+
+    // Update the state based on whether any previous condition was met
+    if (currentContext->conditionMet)
+    {
+        // A previous condition was already satisfied, so skip the else branch
+        currentContext->state = TM32ASM_CS_SKIPPING;
+    }
+    else
+    {
+        // No previous condition was satisfied, so activate the else branch
+        currentContext->state = TM32ASM_CS_ACTIVE;
+    }
+    
+    currentContext->hasElse = true;
+
+    // Note: Conditional directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // leaving only the final processed content.
+
+    return true;
+}
+
+static bool TM32ASM_ProcessEndifDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Store the directive token before advancing
+    TM32ASM_Token* directiveToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+
+    // Skip past the .endif directive token
+    preprocessor->currentTokenIndex++;
+
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalDepth == 0)
+    {
+        TM32ASM_ReportError(preprocessor, ".endif without matching .if");
+        return false;
+    }
+
+    // Pop the conditional context from the stack
+    preprocessor->conditionalDepth--;
+
+    // Note: Conditional directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // leaving only the final processed content.
+
+    return true;
+}
+
+static bool TM32ASM_ProcessElseifDirective (
+    TM32ASM_Preprocessor*   preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+
+    // Store the directive token before advancing
+    TM32ASM_Token* directiveToken = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
+
+    // Skip past the .elseif directive token
+    preprocessor->currentTokenIndex++;
+
+    // Check if we're in a conditional block
+    if (preprocessor->conditionalDepth == 0)
+    {
+        TM32ASM_ReportError(preprocessor, ".elseif without matching .if");
+        return false;
+    }
+
+    TM32ASM_ConditionalContext* currentContext = &preprocessor->conditionalStack[preprocessor->conditionalDepth - 1];
+    
+    // Check if we already have an else
+    if (currentContext->hasElse)
+    {
+        TM32ASM_ReportError(preprocessor, ".elseif after .else in same .if block");
+        return false;
+    }
+
+    // Find the end of the conditional expression
+    size_t startIndex = preprocessor->currentTokenIndex;
+    size_t endIndex = TM32ASM_FindExpressionEnd(preprocessor, startIndex);
+
+    if (startIndex >= endIndex)
+    {
+        TM32ASM_ReportError(preprocessor, "Expected expression after .elseif directive");
+        return false;
+    }
+
+    // Evaluate the conditional expression only if we haven't already satisfied a condition
+    bool shouldEvaluate = (currentContext->state == TM32ASM_CS_SKIPPING && !currentContext->conditionMet);
+    bool condition = false;
+
+    if (shouldEvaluate)
+    {
+        TM32ASM_Value conditionValue = {0};
+        if (!TM32ASM_EvaluateExpression(preprocessor, preprocessor->inputStream, startIndex, endIndex, &conditionValue))
+        {
+            TM32ASM_ReportError(preprocessor, "Failed to evaluate .elseif condition expression");
+            return false;
+        }
+
+        // Convert to boolean: non-zero values are true
+        if (conditionValue.type == TM32ASM_VT_INTEGER && conditionValue.integerValue != 0)
+        {
+            condition = true;
+        }
+        else if (conditionValue.type == TM32ASM_VT_FIXED_POINT && conditionValue.fixedPointValue != 0.0)
+        {
+            condition = true;
+        }
+        
+        TM32ASM_DestroyValue(&conditionValue);
+    }
+
+    // Update current token index to past the expression
+    preprocessor->currentTokenIndex = endIndex;
+
+    // Update the conditional state
+    if (shouldEvaluate && condition)
+    {
+        // This elseif condition is true and no previous condition was met
+        currentContext->state = TM32ASM_CS_ACTIVE;
+        currentContext->conditionMet = true;
+    }
+    else if (!currentContext->conditionMet)
+    {
+        // No condition has been met yet, keep skipping
+        currentContext->state = TM32ASM_CS_SKIPPING;
+    }
+    // If conditionMet is already true, keep the current state (should be skipping)
+
+    // Note: Conditional directives are not added to the output stream
+    // because preprocessing should resolve these directives completely,
+    // leaving only the final processed content.
+
+    return true;
 }
 
 static bool TM32ASM_ParseVariableDeclaration (
@@ -1673,8 +2001,10 @@ static bool TM32ASM_PerformCompoundAssignment (
  */
 static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preprocessor, const TM32ASM_Token* token)
 {
+    printf("DEBUG: SubstituteVariable called with token: '%s'\n", token ? token->lexeme : "NULL");
     if (preprocessor == NULL || token == NULL || token->type != TM32ASM_TT_IDENTIFIER)
     {
+        printf("DEBUG: Early return - invalid parameters\n");
         return NULL;
     }
 
@@ -1682,13 +2012,17 @@ static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preproce
     TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
     if (symbol == NULL || (symbol->type != TM32ASM_ST_VARIABLE && symbol->type != TM32ASM_ST_CONSTANT))
     {
+        printf("DEBUG: Early return - symbol not found or wrong type\n");
         return NULL; // Not a variable or constant
     }
 
     if (symbol->value == NULL)
     {
+        printf("DEBUG: Early return - no value stored\n");
         return NULL; // No value stored
     }
+
+    printf("DEBUG: Found symbol '%s' with value '%s'\n", symbol->name, symbol->value);
 
     // Determine if this is an integer or fixed-point value by trying to parse
     char* endPtr = NULL;
@@ -1699,17 +2033,34 @@ static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preproce
     if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
     {
         // Successfully parsed as integer - create decimal token
+        printf("DEBUG: Parsed '%s' as integer: %lld\n", symbol->value, intValue);
         return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_DECIMAL);
     }
     else
     {
+        printf("DEBUG: Failed to parse '%s' as integer, trying float\n", symbol->value);
         // Try parsing as a fixed-point number
         errno = 0;
         double floatValue = strtod(symbol->value, &endPtr);
         if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
         {
             // Successfully parsed as floating-point
-            return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_FIXED_POINT);
+            printf("DEBUG: Parsed '%s' as float: %f, floor: %f\n", symbol->value, floatValue, floor(floatValue));
+            // Check if fractional part is zero - if so, treat as integer
+            if (floatValue == floor(floatValue))
+            {
+                // No fractional part, create as integer
+                char integerStr[32];
+                snprintf(integerStr, sizeof(integerStr), "%.0f", floatValue);
+                printf("DEBUG: Converting to integer: '%s'\n", integerStr);
+                return TM32ASM_CreateToken(integerStr, TM32ASM_TT_DECIMAL);
+            }
+            else
+            {
+                // Has fractional part, keep as fixed-point
+                printf("DEBUG: Keeping as fixed-point: '%s'\n", symbol->value);
+                return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_FIXED_POINT);
+            }
         }
         else
         {
@@ -2401,7 +2752,17 @@ char* TM32ASM_ValueToString (
             char* result = malloc(64);
             if (result != NULL)
             {
-                snprintf(result, 64, "%.6f", value->fixedPointValue);
+                // Check if the fixed-point value has no fractional part
+                if (value->fixedPointValue == floor(value->fixedPointValue))
+                {
+                    // Format as integer if no fractional part
+                    snprintf(result, 64, "%.0f", value->fixedPointValue);
+                }
+                else
+                {
+                    // Format with decimal places if has fractional part
+                    snprintf(result, 64, "%.6f", value->fixedPointValue);
+                }
             }
             return result;
         }

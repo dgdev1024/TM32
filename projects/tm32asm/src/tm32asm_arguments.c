@@ -118,7 +118,8 @@ const char* TM32ASM_GetPositionalArgument (
             // Previous argument was an option flag
             // Check if it's a known option that takes a value
             const char* prevArg = s_argValues[i - 1];
-            if ((strcmp(prevArg, "--output") == 0) || (strcmp(prevArg, "-o") == 0))
+            if ((strcmp(prevArg, "--output") == 0) || (strcmp(prevArg, "-o") == 0) ||
+                (strcmp(prevArg, "--output-preprocessed") == 0))
             {
                 isOptionValue = true;
             }
