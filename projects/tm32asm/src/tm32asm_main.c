@@ -257,23 +257,17 @@ static bool TM32ASM_WritePreprocessedTokensToFile (TM32ASM_TokenStream* tokenStr
                     break;
                     
                 case TM32ASM_TT_INSTRUCTION:
-                    // Instructions should be properly indented
-                    if (isStartOfLine)
+                    // Instructions should be properly indented and start on new lines
+                    if (!isStartOfLine)
                     {
-                        fprintf(outputFile, "    %s", token->lexeme); // 4-space indent
+                        fprintf(outputFile, "\n");
+                        isStartOfLine = true;
+                        needsSpace = false;
                     }
-                    else
-                    {
-                        if (needsSpace)
-                        {
-                            fprintf(outputFile, " ");
-                        }
-                        fprintf(outputFile, "%s", token->lexeme);
-                    }
+                    fprintf(outputFile, "    %s", token->lexeme); // 4-space indent
                     needsSpace = true;
                     isStartOfLine = false;
                     break;
-                    
                 case TM32ASM_TT_REGISTER:
                 case TM32ASM_TT_CONDITION:
                 case TM32ASM_TT_BINARY:

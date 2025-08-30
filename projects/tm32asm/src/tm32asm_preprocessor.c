@@ -1001,19 +1001,14 @@ static bool TM32ASM_ProcessToken (
     TM32ASM_ReturnValueIfNull(preprocessor, false);
     TM32ASM_ReturnValueIfNull(preprocessor->inputStream, false);
 
-    printf("DEBUG: ProcessToken called, currentTokenIndex=%zu, tokenCount=%zu\n", 
-           preprocessor->currentTokenIndex, preprocessor->inputStream->tokenCount);
 
     // Check if we've reached the end of the input stream
     if (preprocessor->currentTokenIndex >= preprocessor->inputStream->tokenCount)
     {
-        printf("DEBUG: End of input reached\n");
         return true; // End of stream, not an error
     }
 
     TM32ASM_Token* token = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
-    printf("DEBUG: Processing token at index %zu: '%s' (type %d)\n", 
-           preprocessor->currentTokenIndex, token ? token->lexeme : "NULL", token ? token->type : -1);
 
     // Update current position for error reporting
     if (token != NULL)
@@ -1232,15 +1227,12 @@ static bool TM32ASM_ProcessDirective (
             return TM32ASM_ProcessConstDirective(preprocessor);
 
         case TM32ASM_DT_IF:
-            printf("DEBUG: Processing .if directive, conditionalDepth before: %zu\n", preprocessor->conditionalDepth);
             return TM32ASM_ProcessIfDirective(preprocessor);
 
         case TM32ASM_DT_ELSE:
-            printf("DEBUG: Processing .else directive, conditionalDepth: %zu\n", preprocessor->conditionalDepth);
             return TM32ASM_ProcessElseDirective(preprocessor);
 
         case TM32ASM_DT_ENDIF:
-            printf("DEBUG: Processing .endif directive, conditionalDepth before: %zu\n", preprocessor->conditionalDepth);
             return TM32ASM_ProcessEndifDirective(preprocessor);
 
         case TM32ASM_DT_ELSEIF:
@@ -1574,7 +1566,6 @@ static bool TM32ASM_ProcessIfDirective (
     newContext->conditionMet = condition;  // Track if any condition in this if/elseif chain has been met
     
     preprocessor->conditionalDepth++;
-    printf("DEBUG: .if directive increased conditionalDepth to: %zu\n", preprocessor->conditionalDepth);
 
     // Note: Conditional directives are not added to the output stream
     // because preprocessing should resolve these directives completely,
@@ -1653,7 +1644,6 @@ static bool TM32ASM_ProcessEndifDirective (
 
     // Pop the conditional context from the stack
     preprocessor->conditionalDepth--;
-    printf("DEBUG: .endif directive decreased conditionalDepth to: %zu\n", preprocessor->conditionalDepth);
 
     // Note: Conditional directives are not added to the output stream
     // because preprocessing should resolve these directives completely,
@@ -1967,10 +1957,14 @@ static bool TM32ASM_ProcessWhileDirective (
     context->stepValue = 1;
     context->iterationCount = 0;
     context->bodyTokens = TM32ASM_CreateTokenStream();
+    context->conditionTokens = conditionTokens;
+    context->conditionTokenCount = conditionTokenCount;
     
     if (context->bodyTokens == NULL)
     {
-        // Clean up condition tokens
+        // Clean up condition tokens since they're now in the context
+        context->conditionTokens = NULL;
+        context->conditionTokenCount = 0;
         for (size_t i = 0; i < conditionTokenCount; i++)
         {
             TM32ASM_DestroyToken(conditionTokens[i]);
@@ -1983,7 +1977,9 @@ static bool TM32ASM_ProcessWhileDirective (
     if (!TM32ASM_CollectLoopBody(preprocessor, context->bodyTokens))
     {
         TM32ASM_DestroyTokenStream(context->bodyTokens);
-        // Clean up condition tokens
+        // Clean up condition tokens since they're now in the context
+        context->conditionTokens = NULL;
+        context->conditionTokenCount = 0;
         for (size_t i = 0; i < conditionTokenCount; i++)
         {
             TM32ASM_DestroyToken(conditionTokens[i]);
@@ -2003,11 +1999,18 @@ static bool TM32ASM_ProcessWhileDirective (
         TM32ASM_DestroyTokenStream(context->bodyTokens);
         context->bodyTokens = NULL;
     }
-    for (size_t i = 0; i < conditionTokenCount; i++)
+    
+    // Clean up condition tokens
+    if (context->conditionTokens != NULL)
     {
-        TM32ASM_DestroyToken(conditionTokens[i]);
+        for (size_t i = 0; i < context->conditionTokenCount; i++)
+        {
+            TM32ASM_DestroyToken(context->conditionTokens[i]);
+        }
+        TM32ASM_Destroy(context->conditionTokens);
+        context->conditionTokens = NULL;
+        context->conditionTokenCount = 0;
     }
-    TM32ASM_Destroy(conditionTokens);
 
     return success;
 }
@@ -2730,10 +2733,8 @@ static bool TM32ASM_PerformCompoundAssignment (
  */
 static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preprocessor, const TM32ASM_Token* token)
 {
-    printf("DEBUG: SubstituteVariable called with token: '%s'\n", token ? token->lexeme : "NULL");
     if (preprocessor == NULL || token == NULL || token->type != TM32ASM_TT_IDENTIFIER)
     {
-        printf("DEBUG: Early return - invalid parameters\n");
         return NULL;
     }
 
@@ -2741,17 +2742,14 @@ static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preproce
     TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
     if (symbol == NULL || (symbol->type != TM32ASM_ST_VARIABLE && symbol->type != TM32ASM_ST_CONSTANT))
     {
-        printf("DEBUG: Early return - symbol not found or wrong type\n");
         return NULL; // Not a variable or constant
     }
 
     if (symbol->value == NULL)
     {
-        printf("DEBUG: Early return - no value stored\n");
         return NULL; // No value stored
     }
 
-    printf("DEBUG: Found symbol '%s' with value '%s'\n", symbol->name, symbol->value);
 
     // Determine if this is an integer or fixed-point value by trying to parse
     char* endPtr = NULL;
@@ -2762,32 +2760,27 @@ static TM32ASM_Token* TM32ASM_SubstituteVariable (TM32ASM_Preprocessor* preproce
     if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
     {
         // Successfully parsed as integer - create decimal token
-        printf("DEBUG: Parsed '%s' as integer: %lld\n", symbol->value, intValue);
         return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_DECIMAL);
     }
     else
     {
-        printf("DEBUG: Failed to parse '%s' as integer, trying float\n", symbol->value);
         // Try parsing as a fixed-point number
         errno = 0;
         double floatValue = strtod(symbol->value, &endPtr);
         if (errno == 0 && endPtr != symbol->value && *endPtr == '\0')
         {
             // Successfully parsed as floating-point
-            printf("DEBUG: Parsed '%s' as float: %f, floor: %f\n", symbol->value, floatValue, floor(floatValue));
             // Check if fractional part is zero - if so, treat as integer
             if (floatValue == floor(floatValue))
             {
                 // No fractional part, create as integer
                 char integerStr[32];
                 snprintf(integerStr, sizeof(integerStr), "%.0f", floatValue);
-                printf("DEBUG: Converting to integer: '%s'\n", integerStr);
                 return TM32ASM_CreateToken(integerStr, TM32ASM_TT_DECIMAL);
             }
             else
             {
                 // Has fractional part, keep as fixed-point
-                printf("DEBUG: Keeping as fixed-point: '%s'\n", symbol->value);
                 return TM32ASM_CreateToken(symbol->value, TM32ASM_TT_FIXED_POINT);
             }
         }
@@ -2921,8 +2914,6 @@ static bool TM32ASM_CollectLoopBody (
     TM32ASM_TokenStream* bodyTokens
 )
 {
-    printf("DEBUG: CollectLoopBody starting at index %zu, tokenCount=%zu\n", 
-           preprocessor->currentTokenIndex, preprocessor->inputStream->tokenCount);
     
     // Clear the body tokens stream first
     bodyTokens->tokenReadPointer = 0;
@@ -2935,25 +2926,20 @@ static bool TM32ASM_CollectLoopBody (
         TM32ASM_Token* token = preprocessor->inputStream->tokens[preprocessor->currentTokenIndex];
         preprocessor->currentTokenIndex++;
         
-        printf("DEBUG: CollectLoopBody processing token at index %zu: '%s' (type %d)\n", 
-               preprocessor->currentTokenIndex - 1, token ? token->lexeme : "NULL", token ? token->type : -1);
         
         if (token == NULL)
         {
-            printf("DEBUG: Encountered NULL token, breaking\n");
             break;
         }
         
         // Check for nested loop starts
         if (token->type == TM32ASM_TT_DIRECTIVE)
         {
-            printf("DEBUG: Found directive: '%s'\n", token->lexeme);
             if (strcmp(token->lexeme, ".repeat") == 0 ||
                 strcmp(token->lexeme, ".while") == 0 ||
                 strcmp(token->lexeme, ".for") == 0)
             {
                 nestingLevel++;
-                printf("DEBUG: Nested loop start, level now: %u\n", nestingLevel);
             }
             else if (strcmp(token->lexeme, ".end") == 0 ||
                      strcmp(token->lexeme, ".endrepeat") == 0 ||
@@ -2961,11 +2947,9 @@ static bool TM32ASM_CollectLoopBody (
                      strcmp(token->lexeme, ".endfor") == 0)
             {
                 nestingLevel--;
-                printf("DEBUG: Loop end found, level now: %u\n", nestingLevel);
                 if (nestingLevel == 0)
                 {
                     // Don't include the final .end in the body
-                    printf("DEBUG: Reached final .end, breaking\n");
                     break;
                 }
             }
@@ -2973,27 +2957,22 @@ static bool TM32ASM_CollectLoopBody (
         
         // Add token to body (excluding the final .end)
         TM32ASM_Token* tokenCopy = TM32ASM_CopyToken(token);
-        printf("DEBUG: Adding token to body: '%s'\n", token->lexeme);
         if (tokenCopy == NULL || !TM32ASM_PushTokenBack(bodyTokens, tokenCopy))
         {
-            printf("DEBUG: Failed to add token to body\n");
             if (tokenCopy != NULL)
             {
                 TM32ASM_DestroyToken(tokenCopy);
             }
             return false;
         }
-        printf("DEBUG: Successfully added token, bodyTokens count now: %zu\n", bodyTokens->tokenCount);
     }
     
     if (nestingLevel > 0)
     {
-        printf("DEBUG: Loop collection failed - nesting level %u still open\n", nestingLevel);
         TM32ASM_LogError("Unclosed loop directive");
         return false;
     }
     
-    printf("DEBUG: Loop collection successful - collected %zu tokens\n", bodyTokens->tokenCount);
     return true;
 }
 
@@ -3025,11 +3004,67 @@ static bool TM32ASM_ExecuteLoop (
         }
         else if (loopContext->type == TM32ASM_LT_WHILE)
         {
-            // For while loops, we would need to evaluate condition
-            // This is simplified for now - we'll break after first iteration
-            if (loopContext->iterationCount > 0)
+            // For while loops, evaluate the condition if we have condition tokens
+            if (loopContext->conditionTokens != NULL && loopContext->conditionTokenCount > 0)
             {
-                break;
+                // Create a temporary token stream for the condition
+                TM32ASM_TokenStream* conditionStream = TM32ASM_CreateTokenStream();
+                if (conditionStream == NULL)
+                {
+                    return false;
+                }
+                
+                // Copy condition tokens to the stream
+                for (size_t i = 0; i < loopContext->conditionTokenCount; i++)
+                {
+                    TM32ASM_Token* copiedToken = TM32ASM_CopyToken(loopContext->conditionTokens[i]);
+                    if (copiedToken == NULL || TM32ASM_PushTokenBack(conditionStream, copiedToken) == NULL)
+                    {
+                        if (copiedToken != NULL)
+                        {
+                            TM32ASM_DestroyToken(copiedToken);
+                        }
+                        TM32ASM_DestroyTokenStream(conditionStream);
+                        return false;
+                    }
+                }
+                
+                // Evaluate the condition expression
+                TM32ASM_Value conditionResult;
+                memset(&conditionResult, 0, sizeof(conditionResult));
+                
+                if (!TM32ASM_EvaluateExpression(preprocessor, conditionStream, 0, 
+                                               conditionStream->tokenCount, &conditionResult))
+                {
+                    TM32ASM_DestroyTokenStream(conditionStream);
+                    return false;
+                }
+                
+                TM32ASM_DestroyTokenStream(conditionStream);
+                
+                // Check if condition is false (break if false)
+                bool conditionMet = false;
+                if (conditionResult.type == TM32ASM_VT_INTEGER)
+                {
+                    conditionMet = (conditionResult.integerValue != 0);
+                }
+                else if (conditionResult.type == TM32ASM_VT_FIXED_POINT)
+                {
+                    conditionMet = (conditionResult.fixedPointValue != 0.0);
+                }
+                
+                if (!conditionMet)
+                {
+                    break;
+                }
+            }
+            else
+            {
+                // If no condition tokens, break after first iteration (fallback)
+                if (loopContext->iterationCount > 0)
+                {
+                    break;
+                }
             }
         }
         else if (loopContext->type == TM32ASM_LT_FOR)
@@ -3067,12 +3102,15 @@ static bool TM32ASM_ExecuteLoop (
         preprocessor->inputStream = loopContext->bodyTokens;
         preprocessor->currentTokenIndex = 0;
         
+        // Variable to preserve break state across loop iterations
+        bool shouldBreakLoop = false;
+        
         // Process loop body tokens through the preprocessor
         while (preprocessor->currentTokenIndex < loopContext->bodyTokens->tokenCount)
         {
             if (preprocessor->shouldBreak)
             {
-                preprocessor->shouldBreak = false;
+                shouldBreakLoop = true;
                 break;
             }
             
@@ -3090,6 +3128,19 @@ static bool TM32ASM_ExecuteLoop (
                 preprocessor->conditionalDepth = savedConditionalDepth;
                 return false;
             }
+            
+            // Check break/continue flags immediately after processing token
+            if (preprocessor->shouldBreak)
+            {
+                shouldBreakLoop = true;
+                break;
+            }
+            
+            if (preprocessor->shouldContinue)
+            {
+                preprocessor->shouldContinue = false;
+                break;
+            }
         }
         
         // Restore input stream state and conditional state
@@ -3097,7 +3148,7 @@ static bool TM32ASM_ExecuteLoop (
         preprocessor->currentTokenIndex = savedTokenIndex;
         preprocessor->conditionalDepth = savedConditionalDepth;
         
-        if (preprocessor->shouldBreak)
+        if (preprocessor->shouldBreak || shouldBreakLoop)
         {
             preprocessor->shouldBreak = false;
             break;
@@ -3112,9 +3163,10 @@ static bool TM32ASM_ExecuteLoop (
         loopContext->iterationCount++;
         
         // Safety check for infinite loops
-        if (loopContext->iterationCount > 100000)
+        size_t maxIterations = (loopContext->type == TM32ASM_LT_WHILE) ? 1000 : 100000;
+        if (loopContext->iterationCount > maxIterations)
         {
-            TM32ASM_LogError("Loop iteration limit exceeded (100000 iterations)");
+            TM32ASM_LogError("Loop iteration limit exceeded (%zu iterations)", maxIterations);
             return false;
         }
     }
@@ -3186,7 +3238,6 @@ TM32ASM_TokenStream* TM32ASM_ProcessTokenStream (
     }
 
     // Check for unclosed conditional blocks
-    printf("DEBUG: Final conditionalDepth at end of processing: %zu\n", preprocessor->conditionalDepth);
     if (preprocessor->conditionalDepth > 0)
     {
         TM32ASM_ReportError(preprocessor, "Unclosed conditional block(s) at end of input");
