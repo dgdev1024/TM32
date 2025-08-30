@@ -144,6 +144,64 @@ int main (int argc, const char** argv)
         return 0;
     }
     
+    // Create preprocessor
+    TM32ASM_Preprocessor* preprocessor = TM32ASM_CreatePreprocessor();
+    if (preprocessor == NULL)
+    {
+        TM32ASM_LogError("Failed to create preprocessor");
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // Set preprocessor options
+    bool verbose = TM32ASM_HasArgumentKey("verbose", 'V') != 0;
+    bool warningsAsErrors = TM32ASM_HasArgumentKey("warnings-as-errors", 'W') != 0;
+    TM32ASM_SetPreprocessorOptions(preprocessor, warningsAsErrors, verbose);
+    
+    // Set input token stream for preprocessing
+    if (!TM32ASM_SetInputTokenStream(preprocessor, stream))
+    {
+        TM32ASM_LogError("Failed to set input token stream for preprocessor");
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // Process token stream through preprocessor
+    if (!TM32ASM_ProcessTokenStream(preprocessor))
+    {
+        TM32ASM_LogError("Preprocessing failed");
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // Get preprocessed token stream
+    TM32ASM_TokenStream* preprocessedStream = TM32ASM_GetOutputTokenStream(preprocessor);
+    if (preprocessedStream == NULL)
+    {
+        TM32ASM_LogError("Failed to get preprocessed token stream");
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 1;
+    }
+    
+    // If `--preprocess-only`, output preprocessed tokens and exit
+    if (preprocessOnly)
+    {
+        printf("=== PREPROCESSED TOKEN STREAM ===\n");
+        TM32ASM_PrintTokens(preprocessedStream);
+        printf("=== END PREPROCESSED TOKENS ===\n");
+        
+        // TODO: Handle --output-preprocessed and --variables options
+        
+        TM32ASM_DestroyPreprocessor(preprocessor);
+        TM32ASM_DestroyLexer(lexer);
+        return 0;
+    }
+    
+    // Clean up
+    TM32ASM_DestroyPreprocessor(preprocessor);
     TM32ASM_DestroyLexer(lexer);
     return 0;
 }

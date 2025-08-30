@@ -17,13 +17,8 @@
  * 
  * @param   ch  The character to check.
  * 
- * @return  `true` if the character can start an identifier; `false` othe    else if (currentChar == '*' && nextChar == '*' && TM32ASM_PeekCharAt(lexer, 2) != '=')
-    {
-        tokenType = TM32ASM_TT_EXPONENT;
-        lexeme[0] = currentChar;
-        lexeme[1] = nextChar;
-        length = 2;
-    } */
+ * @return  `true` if the character can start an identifier; `false` otherwise.
+ */
 static bool TM32ASM_IsIdentifierStart (char ch);
 
 /**
@@ -142,6 +137,24 @@ static TM32ASM_Token* TM32ASM_TokenizeGraphics (TM32ASM_Lexer* lexer);
 static TM32ASM_Token* TM32ASM_TokenizeOperator (TM32ASM_Lexer* lexer);
 
 /**
+ * @brief   Tokenizes a newline character.
+ * 
+ * @param   lexer   A pointer to the TM32ASM lexer.
+ * 
+ * @return  A pointer to the created newline token, or `NULL` on error.
+ */
+static TM32ASM_Token* TM32ASM_TokenizeNewline (TM32ASM_Lexer* lexer);
+
+/**
+ * @brief   Creates an end-of-file token.
+ * 
+ * @param   lexer   A pointer to the TM32ASM lexer.
+ * 
+ * @return  A pointer to the created EOF token, or `NULL` on error.
+ */
+static TM32ASM_Token* TM32ASM_CreateEOFToken (TM32ASM_Lexer* lexer);
+
+/**
  * @brief   Creates a token with the current lexer position information.
  * 
  * @param   lexer   A pointer to the TM32ASM lexer.
@@ -227,7 +240,8 @@ static char TM32ASM_PeekCharAt (const TM32ASM_Lexer* lexer, size_t offset)
 
 static void TM32ASM_SkipWhitespace (TM32ASM_Lexer* lexer)
 {
-    while (isspace(TM32ASM_PeekChar(lexer)))
+    char ch;
+    while ((ch = TM32ASM_PeekChar(lexer)) != '\0' && isspace(ch) && ch != '\n')
     {
         TM32ASM_AdvanceChar(lexer);
     }
@@ -541,6 +555,21 @@ static TM32ASM_Token* TM32ASM_TokenizeGraphics (TM32ASM_Lexer* lexer)
     TM32ASM_Destroy(lexeme);
     
     return token;
+}
+
+static TM32ASM_Token* TM32ASM_TokenizeNewline (TM32ASM_Lexer* lexer)
+{
+    // Advance past the newline character
+    TM32ASM_AdvanceChar(lexer);
+    
+    // Create the newline token
+    return TM32ASM_CreateTokenWithPosition(lexer, "\\n", TM32ASM_TT_NEWLINE);
+}
+
+static TM32ASM_Token* TM32ASM_CreateEOFToken (TM32ASM_Lexer* lexer)
+{
+    // Create the EOF token at current position
+    return TM32ASM_CreateTokenWithPosition(lexer, "<EOF>", TM32ASM_TT_END_OF_FILE);
 }
 
 static TM32ASM_Token* TM32ASM_TokenizeOperator (TM32ASM_Lexer* lexer)
@@ -926,8 +955,13 @@ bool TM32ASM_TokenizeSource (TM32ASM_Lexer* lexer)
             continue;
         }
         
+        // Handle newlines
+        if (currentChar == '\n')
+        {
+            token = TM32ASM_TokenizeNewline(lexer);
+        }
         // Handle directives (start with '.')
-        if (currentChar == '.')
+        else if (currentChar == '.')
         {
             token = TM32ASM_TokenizeIdentifier(lexer);
         }
@@ -978,6 +1012,21 @@ bool TM32ASM_TokenizeSource (TM32ASM_Lexer* lexer)
             TM32ASM_DestroyToken(token);
             return false;
         }
+    }
+    
+    // Add EOF token at the end
+    TM32ASM_Token* eofToken = TM32ASM_CreateEOFToken(lexer);
+    if (eofToken == NULL)
+    {
+        TM32ASM_LogError("Failed to create EOF token");
+        return false;
+    }
+    
+    if (TM32ASM_InsertToken(lexer->tokenStream, eofToken) == NULL)
+    {
+        TM32ASM_LogError("Failed to insert EOF token into stream");
+        TM32ASM_DestroyToken(eofToken);
+        return false;
     }
     
     return true;
