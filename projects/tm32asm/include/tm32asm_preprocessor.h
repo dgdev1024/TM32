@@ -132,6 +132,10 @@ typedef struct
     TM32ASM_TokenStream*    bodyTokens;         /** @brief Tokens to repeat */
     size_t                  bodyStartIndex;     /** @brief Start index of loop body in token stream */
     size_t                  bodyEndIndex;       /** @brief End index of loop body in token stream */
+    
+    // Condition fields for .while loops
+    TM32ASM_Token**         conditionTokens;   /** @brief Condition tokens for .while loops */
+    size_t                  conditionTokenCount;/** @brief Number of condition tokens */
 } TM32ASM_LoopContext;
 
 /**
@@ -172,6 +176,8 @@ typedef struct
     TM32ASM_LoopContext*        loopStack;              /** @brief Stack of loop contexts */
     size_t                      loopDepth;              /** @brief Current loop nesting depth */
     size_t                      loopCapacity;           /** @brief Capacity of loop stack */
+    bool                        shouldContinue;         /** @brief Flag for .continue directive */
+    bool                        shouldBreak;            /** @brief Flag for .break directive */
 
     // File Inclusion Stack
     TM32ASM_IncludeContext*     includeStack;           /** @brief Stack of include contexts */

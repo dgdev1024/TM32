@@ -180,6 +180,32 @@ static bool TM32ASM_WritePreprocessedTokensToFile (TM32ASM_TokenStream* tokenStr
             switch (token->type)
             {
                 case TM32ASM_TT_DIRECTIVE:
+                    // Check if this directive should start on a new line. This
+                    // will be the case for all assembler directives.
+                    bool directiveNeedsNewline = false;
+                    if (token->lexeme != NULL)
+                    {
+                        // These directives should typically start on their own line
+                        if (strcmp(token->lexeme, ".db") == 0 || 
+                            strcmp(token->lexeme, ".dw") == 0 || 
+                            strcmp(token->lexeme, ".dd") == 0 ||
+                            strcmp(token->lexeme, ".text") == 0 ||
+                            strcmp(token->lexeme, ".data") == 0 ||
+                            strcmp(token->lexeme, ".rodata") == 0 ||
+                            strcmp(token->lexeme, ".bss") == 0)
+                        {
+                            directiveNeedsNewline = !isStartOfLine;
+                        }
+                    }
+                    
+                    // Add newline if this directive needs one
+                    if (directiveNeedsNewline)
+                    {
+                        fprintf(outputFile, "\n");
+                        isStartOfLine = true;
+                        needsSpace = false;
+                    }
+                    
                     if (!isStartOfLine && needsSpace)
                     {
                         fprintf(outputFile, " ");

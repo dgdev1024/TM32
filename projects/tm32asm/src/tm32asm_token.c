@@ -38,6 +38,7 @@ static const TM32ASM_Token KEYWORD_LOOKUP[] = {
     { ".endwhile",      TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDWHILE,    NULL, 0 },
     { ".endw",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDWHILE,    NULL, 0 },
     { ".for",           TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_FOR,         NULL, 0 },
+    { ".end",           TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_END,         NULL, 0 },
     { ".endfor",        TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDFOR,      NULL, 0 },
     { ".endf",          TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_ENDFOR,      NULL, 0 },
     { ".continue",      TM32ASM_TT_DIRECTIVE,       TM32ASM_DT_CONTINUE,    NULL, 0 },
@@ -181,6 +182,10 @@ static const TM32ASM_Token KEYWORD_LOOKUP[] = {
     { "tog",            TM32ASM_TT_INSTRUCTION,     TM32CPU_IT_TOG,         NULL, 0 },
     { "set",            TM32ASM_TT_INSTRUCTION,     TM32CPU_IT_SET,         NULL, 0 },
     { "res",            TM32ASM_TT_INSTRUCTION,     TM32CPU_IT_RES,         NULL, 0 },
+
+    // Other Miscellaneous Keywords
+    { "to",             TM32ASM_TT_KEYWORD,         TM32ASM_MKT_TO,         NULL, 0 },
+    { "step",           TM32ASM_TT_KEYWORD,         TM32ASM_MKT_STEP,       NULL, 0 },
 
     { NULL,             TM32ASM_TT_UNKNOWN,         0,                      NULL, 0 }
 };

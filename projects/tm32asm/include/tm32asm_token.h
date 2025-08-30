@@ -30,6 +30,7 @@ typedef enum
     TM32ASM_TT_REGISTER,                /** @brief General-Purpose CPU Register (`a`, `bw`, `ch`, `dl`, etc.) */
     TM32ASM_TT_CONDITION,               /** @brief CPU Execution Condition (`nc`, `zs`, `cc`, etc.) */
     TM32ASM_TT_INSTRUCTION,             /** @brief CPU Instruction (`ld`, `mv`, `jmp`, etc.) */
+    TM32ASM_TT_KEYWORD,                 /** @brief Miscellaneous Keywords (`to`, etc.) */
     TM32ASM_TT_IDENTIFIER,              /** @brief User-Defined Identifier (`myVar`, `addressLabel`, etc.) */
 
     // Literals
@@ -130,6 +131,7 @@ typedef enum
     TM32ASM_DT_WHILE,               /** @brief While Directive (`.while`) */
     TM32ASM_DT_ENDWHILE,            /** @brief End While Directive (`.endwhile`, `.endw`) */
     TM32ASM_DT_FOR,                 /** @brief For Directive (`.for`) */
+    TM32ASM_DT_END,                 /** @brief Generic End Directive (`.end`) */
     TM32ASM_DT_ENDFOR,              /** @brief End For Directive (`.endfor`, `.endf`) */
     TM32ASM_DT_CONTINUE,            /** @brief Continue Directive (`.continue`) */
     TM32ASM_DT_BREAK,               /** @brief Break Directive (`.break`) */
@@ -202,6 +204,16 @@ typedef enum
     TM32ASM_FT_STARTOF,
 
 } TM32ASM_FunctionType;
+
+/**
+ * @brief   Enumerates all miscellaneous keywords, which are not covered by
+ *          other categories.
+ */
+typedef enum
+{
+    TM32ASM_MKT_TO = 0,     /** @brief The `to` keyword, used in defining the range in `.for` loops. */
+    TM32ASM_MKT_STEP,       /** @brief The `step` keyword, used to define the increment in `.for` loops. */
+} TM32ASM_MiscKeywordType;
 
 /* Public Structures **********************************************************/
 

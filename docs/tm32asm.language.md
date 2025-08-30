@@ -145,13 +145,16 @@ assembler. The following preprocessor directives are supported:
         conditions.
     - Nested conditional blocks are supported, and encouraged for complex
         conditions.
-- `.repeat <count>`, `.rept <count>`: Begins a repetition block that will repeat
-    the enclosed code `<count>` times. The repetition block ends with the
-    `.endrepeat` or `.endr` directive.
-    - The `<count>` must be a non-negative, non-zero integer, or an expression 
-        which evaluates to one. If `<count>` is zero, the block will be skipped 
-        entirely. If `<count>` is negative, an error will be raised during the 
+- `.repeat <count>[, <iteration>]`, `.rept <count>[, <iteration>]`: Begins a
+    repetition block that will repeat the enclosed code `<count>` times. The
+    repetition block ends with the `.endrepeat` or `.endr` directive.
+    - The `<count>` must be a non-negative, non-zero integer, or an expression
+        which evaluates to one. If `<count>` is zero, the block will be skipped
+        entirely. If `<count>` is negative, an error will be raised during the
         assembly process.
+    - The `<iteration>` parameter, if one is provided, is a variable which can
+        be used within the repetition block (and any nested blocks) to track
+        the current iteration count.
     - Nested repetition blocks are supported, and encouraged for complex code
         generation patterns.
 - `.while <condition>`: Begins a while loop block that will repeat the enclosed
