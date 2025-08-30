@@ -866,7 +866,7 @@ comment, a single label with an inline comment, a standalone comment, or is blan
 Lines are structured as follows:
 
 ```assembly
-[label:] [instruction|directive|macro] [comma-separated operands] [; comment]
+[label:] [instruction|directive|macro] [comma-separated operands] [; comment] (New Line)
 ```
 
 - **Label**: An optional address label, followed by a colon. Labels must be
@@ -888,6 +888,7 @@ Lines are structured as follows:
     and continues to the end of the line. Comments may be preceded by at least
     one whitespace character if an instruction, directive, or label is present.
 - **Blank Lines**: Lines that contain only whitespace characters are ignored.
+- **New Lines**: A new line must be created for each instruction, directive, or label.
 
 ### 7.2 Naming Conventions
 

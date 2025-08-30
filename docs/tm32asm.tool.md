@@ -261,6 +261,52 @@ The preprocessor supports loop constructs for code generation:
   conditional assembly
 - `.break` and `.continue`: Control loop execution
 
+#### 3.2.6 Preprocessor Order
+
+The preprocessor operates in a multi-pass approach to ensure correct processing of
+directives and macros, handling forward references and complex dependencies. The
+order of operations is as follows:
+
+1. **File Inclusion**: Recursively process all `.include` directives to bring in
+    external source files and build the complete token stream. This includes:
+    - Processing nested includes to any depth
+    - Detecting and preventing circular includes
+    - Maintaining file context information for error reporting
+
+2. **Symbol Declaration Pass**: Scan the entire token stream to collect symbol
+   definitions without performing expansions or evaluations:
+   - Record all `.macro` definitions and their parameter lists
+   - Record all `.define`/`.def` definitions and their replacement text
+   - Record all `.let` and `.const` declarations (values evaluated later)
+   - Build symbol tables to enable forward reference resolution
+
+3. **Macro Expansion Pass**: Process macro expansions in dependency order:
+   - Expand parametric macros (`.macro`) first, as they may define other symbols
+   - Expand simple text substitution macros (`.define`/`.def`)
+   - Handle nested macro invocations recursively
+   - Detect and report circular macro dependencies
+
+4. **Variable and Constant Evaluation**: Process variable and constant definitions
+   with full expression evaluation:
+   - Evaluate `.const` directive expressions using defined symbols
+   - Initialize `.let` variables with their specified or default values
+   - Resolve any symbol references in initialization expressions
+
+5. **Control Flow and Loop Processing**: Process conditional assembly and loop
+   constructs using the fully resolved symbol environment:
+   - Evaluate `.if`, `.elif`, `.else`, `.endif` conditions
+   - Process `.repeat`, `.while`, `.for` loop constructs
+   - Handle `.break` and `.continue` directives within loops
+   - Recursively apply steps 3-5 for code generated within constructs
+
+6. **Final Token Stream Generation**: After all preprocessing is complete,
+   output the final token stream containing no preprocessor directives or
+   unresolved macros for parsing.
+
+**Forward Reference Handling**: This multi-pass approach allows symbols to be
+referenced before their definition within the same compilation unit, enabling
+more flexible code organization and supporting common assembly language patterns.
+
 ### 3.3 Parser
 
 The parser takes the preprocessed token stream and constructs an Abstract

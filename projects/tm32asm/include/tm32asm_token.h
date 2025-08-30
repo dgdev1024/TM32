@@ -105,7 +105,11 @@ typedef enum
     TM32ASM_TT_COLON,                   /** @brief Punctuation Token (`:`) */
     TM32ASM_TT_AT,                      /** @brief Punctuation Token (`@@`) */
     TM32ASM_TT_QUESTION,                /** @brief Punctuation Token (`?`) */
-    
+
+    // Control Tokens
+    TM32ASM_TT_NEWLINE,                 /** @brief Newline Character (`\n`) */
+    TM32ASM_TT_END_OF_FILE,             /** @brief End of File Token (`EOF`) */
+
 } TM32ASM_TokenType;
 
 /**
