@@ -103,12 +103,12 @@ assembler. The following preprocessor directives are supported:
     time of definition, and cannot be reassigned later in the source file (or
     another included file). Attempting to reassign a constant will result in an
     error during the assembly process.
-- `.define <name>=<snippet>`, `.def <name>=<snippet>`: Defines a simple text
+- `.define <name> "<snippet>"`, `.def <name> "<snippet>"`: Defines a simple text
     substitution macro named `<name>`, which will be replaced by `<snippet>`
     wherever it appears in the source file (or another included file) after
     its definition. The `<snippet>` can be any sequence of characters, including
-    whitespace, but cannot contain line breaks. The substitution is purely
-    textual, and does not involve any parsing or evaluation.
+    whitespace, but cannot contain line breaks and must be enclosed in double-quotes. 
+    The substitution is purely textual, and does not involve any parsing or evaluation.
     - Simple macros defined with `.define` or `.def` do not support parameters.
     - If a simple macro is redefined later in the source file (or another
         included file), the new definition will override the previous one.
@@ -850,9 +850,6 @@ The syntax for defining a simple text substitution macro is as follows:
 
 ```assembly
 .define MACRO_NAME      "replacement_text"          ; The replacement text must be a string.
-.define MACRO_NAME_2    "replacement_text_2"
-                        "more_replacement_text"     ; The replacement text can also be multiple
-                                                    ; strings in sequence. They will be concatenated.
 ```
 
 ## 7. Format and Style Guidelines

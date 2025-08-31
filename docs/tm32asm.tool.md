@@ -277,7 +277,7 @@ order of operations is as follows:
 
 2. **Symbol Declaration Pass**: Scan the entire token stream to collect symbol
    definitions without performing expansions or evaluations:
-   - Record all `.macro` definitions and their parameter lists
+   - Record all `.macro` definitions and their macro bodies
    - Record all `.define`/`.def` definitions and their replacement text
    - Record all `.let` and `.const` declarations (values evaluated later)
    - Build symbol tables to enable forward reference resolution

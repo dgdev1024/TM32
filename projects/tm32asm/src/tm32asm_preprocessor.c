@@ -868,17 +868,14 @@ static bool TM32ASM_PassSymbolDeclaration (
 )
 {
     TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(preprocessor->inputTokenStream, false);
     
     if (preprocessor->verbose)
     {
         TM32ASM_LogInfo("Starting symbol declaration pass");
     }
     
-    // TODO: Implement symbol declaration logic
-    // This will scan for .macro, .define/.def, .let, and .const directives
-    // and record them in the symbol table without evaluation
-    
-    // For now, create a pass-through: copy input to output
+    // Create output token stream
     TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
     if (outputStream == NULL)
     {
@@ -886,24 +883,287 @@ static bool TM32ASM_PassSymbolDeclaration (
         return false;
     }
     
-    // Copy all tokens from input to output
-    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    // Reset read pointer to start of token stream
+    preprocessor->inputTokenStream->tokenReadPointer = 0;
+    
+    // Scan through all tokens looking for symbol declarations
+    TM32ASM_Token* token = NULL;
+    while ((token = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream)) != NULL)
     {
-        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
-        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
-        if (copiedToken == NULL)
+        bool skipToken = false;
+        
+        // Check for directive tokens that declare symbols
+        if (token->type == TM32ASM_TT_DIRECTIVE)
         {
-            TM32ASM_LogError("Could not copy token during symbol declaration pass");
-            TM32ASM_DestroyTokenStream(outputStream);
-            return false;
+            switch (token->param)
+            {
+                case TM32ASM_DT_MACRO:
+                {
+                    // .macro directive - parametric macro definition
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Found .macro directive at line %u", token->line);
+                    }
+                    
+                    // Get the macro name (next token should be identifier)
+                    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+                    {
+                        TM32ASM_LogError("Expected identifier after .macro directive at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Check if macro already exists
+                    TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, nameToken->lexeme);
+                    if (existingSymbol != NULL)
+                    {
+                        TM32ASM_LogError("Symbol '%s' is already defined at line %u (redefinition at line %u)",
+                                       nameToken->lexeme, existingSymbol->line, nameToken->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Create symbol entry for the macro
+                    TM32ASM_Symbol symbol = {0};
+                    symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
+                    symbol.type = TM32ASM_ST_MACRO_PARAMETRIC;
+                    symbol.value = NULL;  // Will be populated during macro expansion pass
+                    symbol.parameters = NULL;  // Will be populated during macro expansion pass
+                    symbol.parameterCount = 0;  // Will be calculated during macro expansion pass
+                    symbol.isDefined = true;
+                    symbol.line = nameToken->line;
+                    symbol.filename = nameToken->filename;
+                    
+                    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                    {
+                        TM32ASM_LogError("Failed to add macro symbol '%s'", nameToken->lexeme);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Recorded parametric macro: %s", nameToken->lexeme);
+                    }
+                    break;
+                }
+                
+                case TM32ASM_DT_DEFINE:
+                {
+                    // .define/.def directive - simple text substitution macro
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Found .define directive at line %u", token->line);
+                    }
+                    
+                    // Get the macro name (next token should be identifier)
+                    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+                    {
+                        TM32ASM_LogError("Expected identifier after .define directive at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Check if symbol already exists
+                    TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, nameToken->lexeme);
+                    if (existingSymbol != NULL)
+                    {
+                        TM32ASM_LogError("Symbol '%s' is already defined at line %u (redefinition at line %u)",
+                                       nameToken->lexeme, existingSymbol->line, nameToken->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Get the replacement text (next token should be string)
+                    TM32ASM_Token* valueToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (valueToken == NULL || valueToken->type != TM32ASM_TT_STRING)
+                    {
+                        TM32ASM_LogError("Expected string after .define identifier at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Create symbol entry for the simple macro
+                    TM32ASM_Symbol symbol = {0};
+                    symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
+                    symbol.type = TM32ASM_ST_MACRO_SIMPLE;
+                    symbol.value = valueToken->lexeme;  // Temporary assignment for AddSymbol
+                    symbol.parameters = NULL;
+                    symbol.parameterCount = 0;
+                    symbol.isDefined = true;
+                    symbol.line = nameToken->line;
+                    symbol.filename = nameToken->filename;
+                    
+                    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                    {
+                        TM32ASM_LogError("Failed to add simple macro symbol '%s'", nameToken->lexeme);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Recorded simple macro: %s = %s", nameToken->lexeme, valueToken->lexeme);
+                    }
+                    break;
+                }
+                
+                case TM32ASM_DT_LET:
+                {
+                    // .let directive - mutable variable declaration
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Found .let directive at line %u", token->line);
+                    }
+                    
+                    // Get the variable name (next token should be identifier)
+                    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+                    {
+                        TM32ASM_LogError("Expected identifier after .let directive at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Check if symbol already exists
+                    TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, nameToken->lexeme);
+                    if (existingSymbol != NULL)
+                    {
+                        TM32ASM_LogError("Symbol '%s' is already defined at line %u (redefinition at line %u)",
+                                       nameToken->lexeme, existingSymbol->line, nameToken->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Check for optional assignment operator
+                    TM32ASM_Token* nextToken = TM32ASM_PeekNextToken(preprocessor->inputTokenStream, 0);
+                    char* initialValue = NULL;
+                    
+                    if (nextToken != NULL && nextToken->type == TM32ASM_TT_ASSIGN_EQUAL)
+                    {
+                        // Consume the assignment operator
+                        TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                        
+                        // The initialization expression will be evaluated in the variable evaluation pass
+                        // For now, just mark that it has an initialization value
+                        initialValue = "0";  // Default for later evaluation
+                    }
+                    
+                    // Create symbol entry for the variable
+                    TM32ASM_Symbol symbol = {0};
+                    symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
+                    symbol.type = TM32ASM_ST_VARIABLE;
+                    symbol.value = initialValue;  // Will be evaluated in variable evaluation pass
+                    symbol.parameters = NULL;
+                    symbol.parameterCount = 0;
+                    symbol.isDefined = true;
+                    symbol.line = nameToken->line;
+                    symbol.filename = nameToken->filename;
+                    
+                    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                    {
+                        TM32ASM_LogError("Failed to add variable symbol '%s'", nameToken->lexeme);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Recorded variable: %s", nameToken->lexeme);
+                    }
+                    break;
+                }
+                
+                case TM32ASM_DT_CONST:
+                {
+                    // .const directive - immutable constant declaration
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Found .const directive at line %u", token->line);
+                    }
+                    
+                    // Get the constant name (next token should be identifier)
+                    TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+                    {
+                        TM32ASM_LogError("Expected identifier after .const directive at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Check if symbol already exists
+                    TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, nameToken->lexeme);
+                    if (existingSymbol != NULL)
+                    {
+                        TM32ASM_LogError("Symbol '%s' is already defined at line %u (redefinition at line %u)",
+                                       nameToken->lexeme, existingSymbol->line, nameToken->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Constants must have an assignment operator
+                    TM32ASM_Token* assignToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                    if (assignToken == NULL || assignToken->type != TM32ASM_TT_ASSIGN_EQUAL)
+                    {
+                        TM32ASM_LogError("Expected '=' after .const identifier at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // The initialization expression will be evaluated in the variable evaluation pass
+                    // For now, just record that it needs evaluation
+                    
+                    // Create symbol entry for the constant
+                    TM32ASM_Symbol symbol = {0};
+                    symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
+                    symbol.type = TM32ASM_ST_CONSTANT;
+                    symbol.value = NULL;  // Will be evaluated in variable evaluation pass
+                    symbol.parameters = NULL;
+                    symbol.parameterCount = 0;
+                    symbol.isDefined = true;
+                    symbol.line = nameToken->line;
+                    symbol.filename = nameToken->filename;
+                    
+                    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                    {
+                        TM32ASM_LogError("Failed to add constant symbol '%s'", nameToken->lexeme);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Recorded constant: %s", nameToken->lexeme);
+                    }
+                    break;
+                }
+                
+                default:
+                    // Not a symbol declaration directive, copy to output
+                    break;
+            }
         }
         
-        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        // Copy the current token to output stream (unless we're skipping it)
+        if (!skipToken)
         {
-            TM32ASM_LogError("Could not add token to output stream during symbol declaration pass");
-            TM32ASM_DestroyToken(copiedToken);
-            TM32ASM_DestroyTokenStream(outputStream);
-            return false;
+            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+            if (copiedToken == NULL)
+            {
+                TM32ASM_LogError("Could not copy token during symbol declaration pass");
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+            {
+                TM32ASM_LogError("Could not add token to output stream during symbol declaration pass");
+                TM32ASM_DestroyToken(copiedToken);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
         }
     }
     
@@ -916,7 +1176,8 @@ static bool TM32ASM_PassSymbolDeclaration (
     
     if (preprocessor->verbose)
     {
-        TM32ASM_LogInfo("Symbol declaration pass completed (pass-through mode)");
+        TM32ASM_LogInfo("Symbol declaration pass completed successfully with %zu symbols recorded",
+                        preprocessor->symbolCount);
     }
     
     return true;
