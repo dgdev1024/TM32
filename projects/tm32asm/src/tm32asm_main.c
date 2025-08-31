@@ -52,8 +52,16 @@ static bool TM32ASM_PrintTokens (TM32ASM_TokenStream* tokenStream)
         TM32ASM_Token* token = tokenStream->tokens[i];
         if (token != NULL)
         {
-            printf("[%zu] Type: %d, Lexeme: \"%s\", Line: %u\n", 
-                   i, token->type, token->lexeme ? token->lexeme : "(null)", token->line);
+            if (token->lexeme != NULL)
+            {
+                printf("[%zu] Type: %d, Param: 0x%04X, Lexeme: \"%s\", Line: %u\n", 
+                       i, token->type, token->param, token->lexeme, token->line);
+            }
+            else
+            {
+                printf("[%zu] Type: %d, Param: 0x%04X, Line: %u\n", 
+                       i, token->type, token->param, token->line);
+            }
         }
     }
     
@@ -158,6 +166,36 @@ int main (int argc, const char** argv)
     bool warningsAsErrors = TM32ASM_HasArgumentKey("warnings-as-errors", 'W') != 0;
     TM32ASM_SetPreprocessorOptions(preprocessor, warningsAsErrors, verbose);
     
+    // Add the source file's directory as an include path
+    const char* lastSlash = strrchr(sourceFile, '/');
+    const char* lastBackslash = strrchr(sourceFile, '\\');
+    const char* dirEnd = (lastSlash > lastBackslash) ? lastSlash : lastBackslash;
+    
+    if (dirEnd != NULL)
+    {
+        // Source file is in a directory, add that directory as include path
+        size_t dirLen = dirEnd - sourceFile;
+        char* sourceDir = malloc(dirLen + 1);
+        if (sourceDir != NULL)
+        {
+            strncpy(sourceDir, sourceFile, dirLen);
+            sourceDir[dirLen] = '\0';
+            
+        if (!TM32ASM_AddIncludePath(preprocessor, sourceDir))
+        {
+            TM32ASM_LogWarn("Could not add source directory '%s' as include path", sourceDir);
+        }            free(sourceDir);
+        }
+    }
+    else
+    {
+        // Source file is in current directory, add current directory as include path
+        if (!TM32ASM_AddIncludePath(preprocessor, "."))
+        {
+            TM32ASM_LogWarn("Could not add current directory as include path");
+        }
+    }
+    
     // Set input token stream for preprocessing
     if (!TM32ASM_SetInputTokenStream(preprocessor, stream))
     {
@@ -166,6 +204,10 @@ int main (int argc, const char** argv)
         TM32ASM_DestroyLexer(lexer);
         return 1;
     }
+    
+    // Transfer ownership of token stream to preprocessor
+    // The lexer should no longer try to destroy it
+    lexer->tokenStream = NULL;
     
     // Process token stream through preprocessor
     if (!TM32ASM_ProcessTokenStream(preprocessor))
@@ -195,13 +237,13 @@ int main (int argc, const char** argv)
         
         // TODO: Handle --output-preprocessed and --variables options
         
-        TM32ASM_DestroyPreprocessor(preprocessor);
         TM32ASM_DestroyLexer(lexer);
+        TM32ASM_DestroyPreprocessor(preprocessor);
         return 0;
     }
     
     // Clean up
-    TM32ASM_DestroyPreprocessor(preprocessor);
     TM32ASM_DestroyLexer(lexer);
+    TM32ASM_DestroyPreprocessor(preprocessor);
     return 0;
 }

@@ -269,6 +269,8 @@ order of operations is as follows:
 
 1. **File Inclusion**: Recursively process all `.include` directives to bring in
     external source files and build the complete token stream. This includes:
+    - Conducting the **File Inclusion** pass on the file being included and
+      all its nested includes
     - Processing nested includes to any depth
     - Detecting and preventing circular includes
     - Maintaining file context information for error reporting

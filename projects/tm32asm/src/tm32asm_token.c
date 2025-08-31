@@ -190,7 +190,263 @@ static const TM32ASM_Token KEYWORD_LOOKUP[] = {
     { NULL,             TM32ASM_TT_UNKNOWN,         0,                      NULL, 0 }
 };
 
+/* Private Functions **********************************************************/
+
+/**
+ * @brief   Checks whether a token's lexeme can be predicted from its type and param.
+ * 
+ * @param   token   Pointer to the token to check.
+ * @return  bool    Returns `true` if the lexeme can be predicted, otherwise `false`.
+ */
+static bool TM32ASM_IsTokenLexemePredictable(const TM32ASM_Token* token)
+{
+    if (!token) {
+        return false;
+    }
+
+    // Check for arithmetic operators
+    if (token->type == TM32ASM_TT_PLUS ||
+        token->type == TM32ASM_TT_MINUS ||
+        token->type == TM32ASM_TT_TIMES ||
+        token->type == TM32ASM_TT_EXPONENT ||
+        token->type == TM32ASM_TT_DIVIDE ||
+        token->type == TM32ASM_TT_MODULO) {
+        return true;
+    }
+    
+    // Check for bitwise operators
+    if (token->type == TM32ASM_TT_BITWISE_AND ||
+        token->type == TM32ASM_TT_BITWISE_OR ||
+        token->type == TM32ASM_TT_BITWISE_XOR ||
+        token->type == TM32ASM_TT_BITWISE_NOT ||
+        token->type == TM32ASM_TT_LEFT_SHIFT ||
+        token->type == TM32ASM_TT_RIGHT_SHIFT) {
+        return true;
+    }
+    
+    // Check for assignment operators
+    if (token->type == TM32ASM_TT_ASSIGN_EQUAL ||
+        token->type == TM32ASM_TT_ASSIGN_PLUS ||
+        token->type == TM32ASM_TT_ASSIGN_MINUS ||
+        token->type == TM32ASM_TT_ASSIGN_TIMES ||
+        token->type == TM32ASM_TT_ASSIGN_EXPONENT ||
+        token->type == TM32ASM_TT_ASSIGN_DIVIDE ||
+        token->type == TM32ASM_TT_ASSIGN_MODULO ||
+        token->type == TM32ASM_TT_ASSIGN_BITWISE_AND ||
+        token->type == TM32ASM_TT_ASSIGN_BITWISE_OR ||
+        token->type == TM32ASM_TT_ASSIGN_BITWISE_XOR ||
+        token->type == TM32ASM_TT_ASSIGN_LEFT_SHIFT ||
+        token->type == TM32ASM_TT_ASSIGN_RIGHT_SHIFT) {
+        return true;
+    }
+    
+    // Check for comparison operators
+    if (token->type == TM32ASM_TT_COMPARE_EQUAL ||
+        token->type == TM32ASM_TT_COMPARE_NOT_EQUAL ||
+        token->type == TM32ASM_TT_COMPARE_LESS ||
+        token->type == TM32ASM_TT_COMPARE_LESS_EQUAL ||
+        token->type == TM32ASM_TT_COMPARE_GREATER ||
+        token->type == TM32ASM_TT_COMPARE_GREATER_EQUAL) {
+        return true;
+    }
+    
+    // Check for logical operators
+    if (token->type == TM32ASM_TT_LOGICAL_AND ||
+        token->type == TM32ASM_TT_LOGICAL_OR ||
+        token->type == TM32ASM_TT_LOGICAL_NOT) {
+        return true;
+    }
+    
+    // Check for grouping operators
+    if (token->type == TM32ASM_TT_OPEN_PARENTHESIS ||
+        token->type == TM32ASM_TT_CLOSE_PARENTHESIS ||
+        token->type == TM32ASM_TT_OPEN_BRACKET ||
+        token->type == TM32ASM_TT_CLOSE_BRACKET ||
+        token->type == TM32ASM_TT_OPEN_BRACE ||
+        token->type == TM32ASM_TT_CLOSE_BRACE) {
+        return true;
+    }
+    
+    // Check for punctuation tokens
+    if (token->type == TM32ASM_TT_COMMA ||
+        token->type == TM32ASM_TT_COLON ||
+        token->type == TM32ASM_TT_AT ||
+        token->type == TM32ASM_TT_QUESTION) {
+        return true;
+    }
+    
+    // Check for end-of-file token
+    if (token->type == TM32ASM_TT_END_OF_FILE) {
+        return true; // EOF always has predictable lexeme
+    }
+    
+    return false;
+}
+
+/**
+ * @brief Reconstructs the lexeme for a token with predictable lexemes.
+ * 
+ * @param[in] token The token to get the lexeme for.
+ * @return A pointer to the reconstructed lexeme (caller should NOT free this).
+ *         Returns NULL if the token doesn't have a predictable lexeme.
+ */
+static const char* TM32ASM_GetPredictableLexeme(const TM32ASM_Token* token)
+{
+    if (token == NULL) return NULL;
+
+    // For keyword tokens, search the lookup table
+    if (token->type >= TM32ASM_TT_DIRECTIVE && token->type <= TM32ASM_TT_KEYWORD)
+    {
+        for (size_t i = 0; KEYWORD_LOOKUP[i].lexeme != NULL; i++)
+        {
+            if (KEYWORD_LOOKUP[i].type == token->type && 
+                KEYWORD_LOOKUP[i].param == token->param)
+            {
+                return KEYWORD_LOOKUP[i].lexeme;
+            }
+        }
+        return NULL;
+    }
+
+    // Map token types directly to their lexemes
+    switch (token->type)
+    {
+        // Arithmetic operators
+        case TM32ASM_TT_PLUS:
+            return "+";
+        case TM32ASM_TT_MINUS:
+            return "-";
+        case TM32ASM_TT_TIMES:
+            return "*";
+        case TM32ASM_TT_EXPONENT:
+            return "**";
+        case TM32ASM_TT_DIVIDE:
+            return "/";
+        case TM32ASM_TT_MODULO:
+            return "%";
+
+        // Bitwise operators
+        case TM32ASM_TT_BITWISE_AND:
+            return "&";
+        case TM32ASM_TT_BITWISE_OR:
+            return "|";
+        case TM32ASM_TT_BITWISE_XOR:
+            return "^";
+        case TM32ASM_TT_BITWISE_NOT:
+            return "~";
+        case TM32ASM_TT_LEFT_SHIFT:
+            return "<<";
+        case TM32ASM_TT_RIGHT_SHIFT:
+            return ">>";
+
+        // Assignment operators
+        case TM32ASM_TT_ASSIGN_EQUAL:
+            return "=";
+        case TM32ASM_TT_ASSIGN_PLUS:
+            return "+=";
+        case TM32ASM_TT_ASSIGN_MINUS:
+            return "-=";
+        case TM32ASM_TT_ASSIGN_TIMES:
+            return "*=";
+        case TM32ASM_TT_ASSIGN_EXPONENT:
+            return "**=";
+        case TM32ASM_TT_ASSIGN_DIVIDE:
+            return "/=";
+        case TM32ASM_TT_ASSIGN_MODULO:
+            return "%=";
+        case TM32ASM_TT_ASSIGN_BITWISE_AND:
+            return "&=";
+        case TM32ASM_TT_ASSIGN_BITWISE_OR:
+            return "|=";
+        case TM32ASM_TT_ASSIGN_BITWISE_XOR:
+            return "^=";
+        case TM32ASM_TT_ASSIGN_LEFT_SHIFT:
+            return "<<=";
+        case TM32ASM_TT_ASSIGN_RIGHT_SHIFT:
+            return ">>=";
+
+        // Comparison operators
+        case TM32ASM_TT_COMPARE_EQUAL:
+            return "==";
+        case TM32ASM_TT_COMPARE_NOT_EQUAL:
+            return "!=";
+        case TM32ASM_TT_COMPARE_LESS:
+            return "<";
+        case TM32ASM_TT_COMPARE_LESS_EQUAL:
+            return "<=";
+        case TM32ASM_TT_COMPARE_GREATER:
+            return ">";
+        case TM32ASM_TT_COMPARE_GREATER_EQUAL:
+            return ">=";
+
+        // Logical operators
+        case TM32ASM_TT_LOGICAL_AND:
+            return "&&";
+        case TM32ASM_TT_LOGICAL_OR:
+            return "||";
+        case TM32ASM_TT_LOGICAL_NOT:
+            return "!";
+
+        // Grouping operators
+        case TM32ASM_TT_OPEN_PARENTHESIS:
+            return "(";
+        case TM32ASM_TT_CLOSE_PARENTHESIS:
+            return ")";
+        case TM32ASM_TT_OPEN_BRACKET:
+            return "[";
+        case TM32ASM_TT_CLOSE_BRACKET:
+            return "]";
+        case TM32ASM_TT_OPEN_BRACE:
+            return "{";
+        case TM32ASM_TT_CLOSE_BRACE:
+            return "}";
+
+        // Punctuation tokens
+        case TM32ASM_TT_COMMA:
+            return ",";
+        case TM32ASM_TT_COLON:
+            return ":";
+        case TM32ASM_TT_AT:
+            return "@@";
+        case TM32ASM_TT_QUESTION:
+            return "?";
+
+        // Control tokens
+        case TM32ASM_TT_NEWLINE:
+            return "\n";
+        case TM32ASM_TT_END_OF_FILE:
+            return "";
+
+        default:
+            break;
+    }
+
+    return NULL;
+}
+
 /* Public Functions ***********************************************************/
+
+/**
+ * @brief Gets the lexeme for any token, handling both stored and predictable lexemes.
+ * 
+ * @param[in] token The token to get the lexeme for.
+ * @return A pointer to the token's lexeme. Caller should NOT free this pointer.
+ *         For predictable tokens, returns a static string. For others, returns 
+ *         the stored lexeme. Returns NULL if token is NULL or has no lexeme.
+ */
+const char* TM32ASM_GetTokenLexeme(const TM32ASM_Token* token)
+{
+    if (token == NULL) return NULL;
+
+    // If the token has a stored lexeme, use it
+    if (token->lexeme != NULL)
+    {
+        return token->lexeme;
+    }
+
+    // Otherwise, try to reconstruct it if it's predictable
+    return TM32ASM_GetPredictableLexeme(token);
+}
 
 TM32ASM_Token* TM32ASM_CreateToken (
     const char*         lexeme,
@@ -209,12 +465,23 @@ TM32ASM_Token* TM32ASM_CreateToken (
     }
 
     token->type = type;
-    token->lexeme = strdup(lexeme);
-    if (token->lexeme == NULL)
+    
+    // Optimization: Skip heap allocation for tokens with predictable lexemes
+    // Create temporary token for predictability check
+    TM32ASM_Token temp_token = { .type = type, .param = 0 };
+    if (TM32ASM_IsTokenLexemePredictable(&temp_token))
     {
-        TM32ASM_LogErrno("Could not allocate memory for the token lexeme");
-        TM32ASM_DestroyToken(token);
-        return NULL;
+        token->lexeme = NULL;  // Will be reconstructed on-demand by TM32ASM_GetTokenLexeme()
+    }
+    else
+    {
+        token->lexeme = strdup(lexeme);
+        if (token->lexeme == NULL)
+        {
+            TM32ASM_LogErrno("Could not allocate memory for the token lexeme");
+            TM32ASM_DestroyToken(token);
+            return NULL;
+        }
     }
 
     // The struct's other fields are to be set later, by the lexer and
@@ -244,7 +511,9 @@ TM32ASM_Token* TM32ASM_CopyToken (
 {
     TM32ASM_ReturnValueIfNull(token, NULL);
 
-    TM32ASM_Token* copy = TM32ASM_CreateToken(token->lexeme, token->type);
+    // Get the actual lexeme (either stored or reconstructed)
+    const char* lexeme = TM32ASM_GetTokenLexeme(token);
+    TM32ASM_Token* copy = TM32ASM_CreateToken(lexeme, token->type);
     if (copy == NULL)
     {
         return NULL;
@@ -265,9 +534,12 @@ bool TM32ASM_GetKeyword (
     TM32ASM_ReturnValueIfNull(token, false);
     TM32ASM_ReturnValueIfNull(out, false);
 
+    // Get the actual lexeme (either stored or reconstructed)
+    const char* lexeme = TM32ASM_GetTokenLexeme(token);
+    
     for (size_t i = 0; KEYWORD_LOOKUP[i].lexeme != NULL; i++)
     {
-        if (strcasecmp(token->lexeme, KEYWORD_LOOKUP[i].lexeme) == 0)
+        if (strcasecmp(lexeme, KEYWORD_LOOKUP[i].lexeme) == 0)
         {
             *out = TM32ASM_CreateToken(
                 KEYWORD_LOOKUP[i].lexeme,
@@ -293,16 +565,19 @@ uint32_t TM32ASM_GetIntegerLexeme (
 {
     TM32ASM_ReturnValueIfNull(token, 0);
 
+    // Get the actual lexeme (either stored or reconstructed)
+    const char* lexeme = TM32ASM_GetTokenLexeme(token);
+
     switch (token->type)
     {
         case TM32ASM_TT_BINARY:
-            return (uint32_t) strtoull(token->lexeme, NULL, 2);
+            return (uint32_t) strtoull(lexeme, NULL, 2);
         case TM32ASM_TT_OCTAL:
-            return (uint32_t) strtoull(token->lexeme, NULL, 8);
+            return (uint32_t) strtoull(lexeme, NULL, 8);
         case TM32ASM_TT_DECIMAL:
-            return (uint32_t) strtoull(token->lexeme, NULL, 10);
+            return (uint32_t) strtoull(lexeme, NULL, 10);
         case TM32ASM_TT_HEXADECIMAL:
-            return (uint32_t) strtoull(token->lexeme, NULL, 16);
+            return (uint32_t) strtoull(lexeme, NULL, 16);
         case TM32ASM_TT_FIXED_POINT:
         {
             uint64_t fixedPoint = TM32ASM_GetFixedPointLexeme(token);
@@ -318,18 +593,21 @@ double TM32ASM_GetNumberLexeme (
 {
     TM32ASM_ReturnValueIfNull(token, 0.0);
 
+    // Get the actual lexeme (either stored or reconstructed)
+    const char* lexeme = TM32ASM_GetTokenLexeme(token);
+
     switch (token->type)
     {
         case TM32ASM_TT_BINARY:
-            return (double) strtoull(token->lexeme, NULL, 2);
+            return (double) strtoull(lexeme, NULL, 2);
         case TM32ASM_TT_OCTAL:
-            return (double) strtoull(token->lexeme, NULL, 8);
+            return (double) strtoull(lexeme, NULL, 8);
         case TM32ASM_TT_DECIMAL:
-            return (double) strtoull(token->lexeme, NULL, 10);
+            return (double) strtoull(lexeme, NULL, 10);
         case TM32ASM_TT_HEXADECIMAL:
-            return (double) strtoull(token->lexeme, NULL, 16);
+            return (double) strtoull(lexeme, NULL, 16);
         case TM32ASM_TT_FIXED_POINT:
-            return strtod(token->lexeme, NULL);
+            return strtod(lexeme, NULL);
         default: return 0.0;
     }
 }
@@ -345,9 +623,12 @@ uint64_t TM32ASM_GetFixedPointLexeme (
         return 0;
     }
 
+    // Get the actual lexeme (either stored or reconstructed)
+    const char* lexeme = TM32ASM_GetTokenLexeme(token);
+
     // Convert the string to a floating-point number first. Extract the integer
     // and fractional parts from that number.
-    double floatNumber = strtod(token->lexeme, NULL);
+    double floatNumber = strtod(lexeme, NULL);
     double floatInteger = 0.0;
     double floatFraction = modf(floatNumber, &floatInteger);
 

@@ -176,6 +176,17 @@ static bool TM32ASM_PassFinalization (
     TM32ASM_Preprocessor* preprocessor
 );
 
+/**
+ * @brief   Optimizes consecutive newline tokens by reducing them to single newlines.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ *
+ * @return  `true` if the pass was successful; `false` otherwise.
+ */
+static bool TM32ASM_PassNewlineOptimization (
+    TM32ASM_Preprocessor* preprocessor
+);
+
 /* Private Functions - Initialization and Cleanup ****************************/
 
 static bool TM32ASM_InitializePreprocessor (
@@ -292,8 +303,32 @@ static void TM32ASM_CleanupPreprocessor (
         TM32ASM_Destroy(preprocessor->includedFiles);
     }
     
-    // Clean up stacks
-    TM32ASM_Destroy(preprocessor->fileStack);
+    // Clean up token streams - we now own both input and output streams
+    if (preprocessor->inputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->inputTokenStream);
+    }
+    
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    
+    // Clean up file stack contexts
+    if (preprocessor->fileStack != NULL)
+    {
+        for (size_t i = 0; i < preprocessor->fileStackDepth; i++)
+        {
+            if (preprocessor->fileStack[i].filename != NULL)
+            {
+                // Cast away const for destruction since we own this string
+                free((char*)preprocessor->fileStack[i].filename);
+            }
+        }
+        TM32ASM_Destroy(preprocessor->fileStack);
+    }
+    
+    // Clean up control flow stack
     TM32ASM_Destroy(preprocessor->controlFlowStack);
 }
 
@@ -473,14 +508,357 @@ static bool TM32ASM_PassFileInclusion (
 )
 {
     TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(preprocessor->inputTokenStream, false);
     
     if (preprocessor->verbose)
     {
         TM32ASM_LogInfo("Starting file inclusion pass");
     }
     
-    // TODO: Implement file inclusion logic
-    // This will scan for .include directives and recursively process included files
+    // Reset read pointer to start of token stream
+    preprocessor->inputTokenStream->tokenReadPointer = 0;
+    
+    // Create a new token stream for the output with included files
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for file inclusion");
+        return false;
+    }
+    
+    // Process all tokens in the input stream
+    TM32ASM_Token* token = NULL;
+    while ((token = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream)) != NULL)
+    {
+        // Skip overly verbose token processing debug output
+        
+        // Check for .include directive
+        if (token->type == TM32ASM_TT_DIRECTIVE && token->param == TM32ASM_DT_INCLUDE)
+        {
+            TM32ASM_LogInfo("PROCESSING .include directive at line %u", token->line);
+            
+            // Get the next token, which should be a string containing the filename
+            TM32ASM_Token* filenameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+            if (filenameToken == NULL)
+            {
+                TM32ASM_LogError("Expected filename after .include directive at line %u", token->line);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (preprocessor->verbose)
+            {
+                TM32ASM_LogInfo("Filename token: type=%d, lexeme='%s' (length=%zu), line=%u", 
+                              filenameToken->type, filenameToken->lexeme ? filenameToken->lexeme : "NULL",
+                              filenameToken->lexeme ? strlen(filenameToken->lexeme) : 0, filenameToken->line);
+            }
+            
+            if (filenameToken->type != TM32ASM_TT_STRING)
+            {
+                TM32ASM_LogError("Expected string filename after .include directive at line %u, got %s", 
+                               token->line, filenameToken->lexeme);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Extract filename from string token (remove quotes)
+            const char* filename = filenameToken->lexeme;
+            if (strlen(filename) < 2 || filename[0] != '"' || filename[strlen(filename) - 1] != '"')
+            {
+                TM32ASM_LogError("Invalid string format for filename at line %u: %s", 
+                               filenameToken->line, filename);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Create a copy of the filename without quotes
+            size_t filenameLen = strlen(filename) - 2; // Remove quotes
+            char* includedFilename = TM32ASM_Create(filenameLen + 1, char);
+            if (includedFilename == NULL)
+            {
+                TM32ASM_LogErrno("Could not allocate memory for included filename");
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            strncpy(includedFilename, filename + 1, filenameLen);
+            includedFilename[filenameLen] = '\0';
+            
+            if (preprocessor->verbose)
+            {
+                TM32ASM_LogInfo("Extracted filename: '%s' (length=%zu) from context: '%s'", 
+                                includedFilename, strlen(includedFilename), 
+                                token->filename ? token->filename : "unknown");
+            }
+            
+            // Check if file has already been included
+            if (TM32ASM_IsFileIncluded(preprocessor, includedFilename))
+            {
+                if (preprocessor->verbose)
+                {
+                    TM32ASM_LogInfo("File '%s' already included, skipping", includedFilename);
+                }
+                TM32ASM_Destroy(includedFilename);
+                continue;
+            }
+            
+            // Check include depth
+            if (preprocessor->fileStackDepth >= TM32ASM_MAX_INCLUDE_DEPTH)
+            {
+                TM32ASM_LogError("Maximum include depth (%u) exceeded when including '%s'", 
+                               TM32ASM_MAX_INCLUDE_DEPTH, includedFilename);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Try to resolve the file path
+            char* resolvedPath = NULL;
+            if (includedFilename[0] == '/' || includedFilename[0] == '\\')
+            {
+                // Absolute path - use as-is
+                resolvedPath = TM32ASM_Create(strlen(includedFilename) + 1, char);
+                if (resolvedPath != NULL)
+                {
+                    strcpy(resolvedPath, includedFilename);
+                }
+            }
+            else
+            {
+                // Relative path - try include paths
+                for (size_t i = 0; i < preprocessor->includePathCount; i++)
+                {
+                    size_t pathLen = strlen(preprocessor->includePaths[i]) + strlen(includedFilename) + 2; // +2 for '/' and '\0'
+                    char* testPath = TM32ASM_Create(pathLen, char);
+                    if (testPath == NULL)
+                    {
+                        continue;
+                    }
+                    
+                    snprintf(testPath, pathLen, "%s/%s", preprocessor->includePaths[i], includedFilename);
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Testing include path: '%s'", testPath);
+                    }
+                    
+                    // Test if file exists
+                    FILE* testFile = fopen(testPath, "r");
+                    if (testFile != NULL)
+                    {
+                        fclose(testFile);
+                        resolvedPath = testPath;
+                        if (preprocessor->verbose)
+                        {
+                            TM32ASM_LogInfo("Found file at include path: '%s'", testPath);
+                        }
+                        break;
+                    }
+                    
+                    TM32ASM_Destroy(testPath);
+                }
+                
+                // If not found in include paths, try relative to current file
+                if (resolvedPath == NULL && token->filename != NULL)
+                {
+                    // Extract directory from current filename
+                    const char* lastSlash = strrchr(token->filename, '/');
+                    const char* lastBackslash = strrchr(token->filename, '\\');
+                    const char* dirEnd = (lastSlash > lastBackslash) ? lastSlash : lastBackslash;
+                    
+                    if (dirEnd != NULL)
+                    {
+                        size_t dirLen = dirEnd - token->filename + 1;
+                        size_t pathLen = dirLen + strlen(includedFilename) + 1;
+                        char* testPath = TM32ASM_Create(pathLen, char);
+                        if (testPath != NULL)
+                        {
+                            strncpy(testPath, token->filename, dirLen);
+                            strcpy(testPath + dirLen, includedFilename);
+                            
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Testing relative path: '%s' (from context dir of '%s')", 
+                                                testPath, token->filename);
+                            }
+                            
+                            // Test if file exists
+                            FILE* testFile = fopen(testPath, "r");
+                            if (testFile != NULL)
+                            {
+                                fclose(testFile);
+                                resolvedPath = testPath;
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("Found file at relative path: '%s'", testPath);
+                                }
+                            }
+                            else
+                            {
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("File not found at relative path: '%s'", testPath);
+                                }
+                                TM32ASM_Destroy(testPath);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (resolvedPath == NULL)
+            {
+                TM32ASM_LogError("Could not find include file '%s' at line %u", includedFilename, token->line);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Mark file as included
+            if (!TM32ASM_MarkFileIncluded(preprocessor, includedFilename))
+            {
+                TM32ASM_LogError("Could not mark file '%s' as included", includedFilename);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_Destroy(resolvedPath);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Create lexer for included file
+            TM32ASM_Lexer* includeLexer = TM32ASM_CreateLexer();
+            if (includeLexer == NULL)
+            {
+                TM32ASM_LogError("Could not create lexer for included file '%s'", resolvedPath);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_Destroy(resolvedPath);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Load and tokenize the included file
+            if (!TM32ASM_LoadSourceFile(includeLexer, resolvedPath))
+            {
+                TM32ASM_LogError("Could not load included file '%s'", resolvedPath);
+                TM32ASM_DestroyLexer(includeLexer);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_Destroy(resolvedPath);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (!TM32ASM_TokenizeSource(includeLexer))
+            {
+                TM32ASM_LogError("Could not tokenize included file '%s'", resolvedPath);
+                TM32ASM_DestroyLexer(includeLexer);
+                TM32ASM_Destroy(includedFilename);
+                TM32ASM_Destroy(resolvedPath);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            // Add file context to stack
+            if (preprocessor->fileStackDepth < TM32ASM_MAX_INCLUDE_DEPTH)
+            {
+                TM32ASM_FileContext* context = &preprocessor->fileStack[preprocessor->fileStackDepth];
+                context->filename = resolvedPath; // Transfer ownership
+                context->tokenStream = includeLexer->tokenStream;
+                context->currentPosition = 0;
+                context->line = 1;
+                preprocessor->fileStackDepth++;
+            }
+            
+            // Copy tokens from included file to output stream (excluding EOF)
+            includeLexer->tokenStream->tokenReadPointer = 0;
+            TM32ASM_Token* includeToken = NULL;
+            while ((includeToken = TM32ASM_ConsumeNextToken(includeLexer->tokenStream)) != NULL)
+            {
+                if (includeToken->type == TM32ASM_TT_END_OF_FILE)
+                {
+                    break; // Skip EOF token
+                }
+                
+                // Copy the token to output stream
+                TM32ASM_Token* copiedToken = TM32ASM_CopyToken(includeToken);
+                if (copiedToken == NULL)
+                {
+                    TM32ASM_LogError("Could not copy token from included file '%s'", resolvedPath);
+                    TM32ASM_DestroyLexer(includeLexer);
+                    TM32ASM_Destroy(includedFilename);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                
+                if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+                {
+                    TM32ASM_LogError("Could not add token from included file '%s' to output stream", resolvedPath);
+                    TM32ASM_DestroyToken(copiedToken);
+                    TM32ASM_DestroyLexer(includeLexer);
+                    TM32ASM_Destroy(includedFilename);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+            }
+            
+            // Print success message before cleaning up (while resolvedPath is still valid)
+            if (preprocessor->verbose)
+            {
+                TM32ASM_LogInfo("Successfully included file '%s'", resolvedPath);
+            }
+            
+            // Pop file context from stack
+            if (preprocessor->fileStackDepth > 0)
+            {
+                preprocessor->fileStackDepth--;
+                // Free the filename since we're done processing this file
+                // The tokens have already been copied with their own filename references
+                TM32ASM_FileContext* poppedContext = &preprocessor->fileStack[preprocessor->fileStackDepth];
+                if (poppedContext->filename != NULL)
+                {
+                    char* filenameToFree = (char*)poppedContext->filename;
+                    TM32ASM_Destroy(filenameToFree);
+                    poppedContext->filename = NULL;
+                }
+            }
+            
+            // Clean up
+            TM32ASM_DestroyLexer(includeLexer);
+            TM32ASM_Destroy(includedFilename);
+            
+            // Skip to next token (don't copy the .include directive to output)
+            TM32ASM_LogInfo("SKIPPING .include directive at line %u (successfully processed)", token->line);
+            continue;
+        }
+        else
+        {
+            // Regular token - copy to output stream
+            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+            if (copiedToken == NULL)
+            {
+                TM32ASM_LogError("Could not copy token to output stream");
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+            {
+                TM32ASM_LogError("Could not add token to output stream");
+                TM32ASM_DestroyToken(copiedToken);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+        }
+    }
+    
+    // Set the output token stream to the processed stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("File inclusion pass completed successfully");
+    }
     
     return true;
 }
@@ -500,6 +878,47 @@ static bool TM32ASM_PassSymbolDeclaration (
     // This will scan for .macro, .define/.def, .let, and .const directives
     // and record them in the symbol table without evaluation
     
+    // For now, create a pass-through: copy input to output
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for symbol declaration pass");
+        return false;
+    }
+    
+    // Copy all tokens from input to output
+    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+        if (copiedToken == NULL)
+        {
+            TM32ASM_LogError("Could not copy token during symbol declaration pass");
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+        
+        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        {
+            TM32ASM_LogError("Could not add token to output stream during symbol declaration pass");
+            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+    }
+    
+    // Set the output token stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Symbol declaration pass completed (pass-through mode)");
+    }
+    
     return true;
 }
 
@@ -517,6 +936,47 @@ static bool TM32ASM_PassMacroExpansion (
     // TODO: Implement macro expansion logic
     // This will expand parametric macros first, then simple text substitution macros
     
+    // For now, create a pass-through: copy input to output
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for macro expansion pass");
+        return false;
+    }
+    
+    // Copy all tokens from input to output
+    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+        if (copiedToken == NULL)
+        {
+            TM32ASM_LogError("Could not copy token during macro expansion pass");
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+        
+        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        {
+            TM32ASM_LogError("Could not add token to output stream during macro expansion pass");
+            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+    }
+    
+    // Set the output token stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Macro expansion pass completed (pass-through mode)");
+    }
+    
     return true;
 }
 
@@ -532,7 +992,48 @@ static bool TM32ASM_PassVariableEvaluation (
     }
     
     // TODO: Implement variable and constant evaluation logic
-    // This will evaluate .const expressions and initialize .let variables
+    // This will evaluate .let and .const expressions and substitute their values
+    
+    // For now, create a pass-through: copy input to output
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for variable evaluation pass");
+        return false;
+    }
+    
+    // Copy all tokens from input to output
+    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+        if (copiedToken == NULL)
+        {
+            TM32ASM_LogError("Could not copy token during variable evaluation pass");
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+        
+        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        {
+            TM32ASM_LogError("Could not add token to output stream during variable evaluation pass");
+            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+    }
+    
+    // Set the output token stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Variable evaluation pass completed (pass-through mode)");
+    }
     
     return true;
 }
@@ -551,6 +1052,47 @@ static bool TM32ASM_PassControlFlow (
     // TODO: Implement control flow processing logic
     // This will handle .if/.elif/.else/.endif, .repeat, .while, .for blocks
     
+    // For now, create a pass-through: copy input to output
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for control flow pass");
+        return false;
+    }
+    
+    // Copy all tokens from input to output
+    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+        if (copiedToken == NULL)
+        {
+            TM32ASM_LogError("Could not copy token during control flow pass");
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+        
+        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        {
+            TM32ASM_LogError("Could not add token to output stream during control flow pass");
+            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyTokenStream(outputStream);
+            return false;
+        }
+    }
+    
+    // Set the output token stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Control flow pass completed (pass-through mode)");
+    }
+    
     return true;
 }
 
@@ -565,8 +1107,8 @@ static bool TM32ASM_PassFinalization (
         TM32ASM_LogInfo("Starting final token stream generation pass");
     }
     
-    // TODO: Implement finalization logic
-    // For now, just copy all input tokens to output as a basic pass-through
+    // The finalization pass should process the tokens that have been processed by all previous passes
+    // At this point, inputTokenStream contains the output from all previous passes
     if (preprocessor->inputTokenStream != NULL)
     {
         for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
@@ -574,12 +1116,91 @@ static bool TM32ASM_PassFinalization (
             TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
             if (token != NULL)
             {
-                if (TM32ASM_InsertToken(preprocessor->outputTokenStream, token) == NULL)
+                // Copy the token to avoid shared ownership
+                TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+                if (copiedToken == NULL)
                 {
-                    TM32ASM_LogError("Failed to copy token to output stream");
+                    TM32ASM_LogError("Failed to copy token");
+                    return false;
+                }
+                
+                if (TM32ASM_InsertToken(preprocessor->outputTokenStream, copiedToken) == NULL)
+                {
+                    TM32ASM_DestroyToken(copiedToken);
+                    TM32ASM_LogError("Failed to insert copied token to output stream");
                     return false;
                 }
             }
+        }
+    }
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Finalization pass completed with %zu tokens", 
+                        preprocessor->outputTokenStream->tokenCount);
+    }
+    
+    return true;
+}
+
+static bool TM32ASM_PassNewlineOptimization (
+    TM32ASM_Preprocessor* preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Starting newline optimization pass");
+    }
+    
+    // Count input tokens for logging
+    size_t inputTokenCount = preprocessor->inputTokenStream ? preprocessor->inputTokenStream->tokenCount : 0;
+    
+    // Process tokens from input stream, reducing consecutive newlines
+    if (preprocessor->inputTokenStream != NULL)
+    {
+        bool previousWasNewline = false;
+        size_t optimizedCount = 0;
+        
+        for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+        {
+            TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+            if (token == NULL) continue;
+            
+            // Check if this is a newline token
+            bool isNewline = (token->type == TM32ASM_TT_NEWLINE);
+            
+            // Skip consecutive newlines (keep only the first one)
+            if (isNewline && previousWasNewline)
+            {
+                optimizedCount++;
+                continue; // Skip this newline token
+            }
+            
+            // Copy the token to output stream
+            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+            if (copiedToken == NULL)
+            {
+                TM32ASM_LogError("Failed to copy token during newline optimization");
+                return false;
+            }
+            
+            if (TM32ASM_InsertToken(preprocessor->outputTokenStream, copiedToken) == NULL)
+            {
+                TM32ASM_DestroyToken(copiedToken);
+                TM32ASM_LogError("Failed to insert token during newline optimization");
+                return false;
+            }
+            
+            // Update state for next iteration
+            previousWasNewline = isNewline;
+        }
+        
+        if (preprocessor->verbose)
+        {
+            TM32ASM_LogInfo("Newline optimization completed: %zu tokens processed, %zu consecutive newlines removed, %zu tokens output", 
+                           inputTokenCount, optimizedCount, preprocessor->outputTokenStream->tokenCount);
         }
     }
     
@@ -725,42 +1346,176 @@ bool TM32ASM_ProcessTokenStream (
                         preprocessor->inputTokenStream->tokenCount);
     }
     
-    // Execute all preprocessor passes in sequence
-    static const struct {
-        TM32ASM_PreprocessorPass pass;
-        bool (*function)(TM32ASM_Preprocessor*);
-        const char* name;
-    } passes[] = {
-        { TM32ASM_PP_FILE_INCLUSION,      TM32ASM_PassFileInclusion,      "File Inclusion" },
-        { TM32ASM_PP_SYMBOL_DECLARATION,  TM32ASM_PassSymbolDeclaration,  "Symbol Declaration" },
-        { TM32ASM_PP_MACRO_EXPANSION,     TM32ASM_PassMacroExpansion,     "Macro Expansion" },
-        { TM32ASM_PP_VARIABLE_EVALUATION, TM32ASM_PassVariableEvaluation, "Variable Evaluation" },
-        { TM32ASM_PP_CONTROL_FLOW,        TM32ASM_PassControlFlow,        "Control Flow Processing" },
-        { TM32ASM_PP_FINALIZATION,        TM32ASM_PassFinalization,       "Finalization" }
-    };
+    // First, run the file inclusion pass iteratively until no more includes are found
+    size_t inclusionIteration = 1;
+    const size_t maxInclusionIterations = 100; // Prevent infinite loops
+    bool includesFound = true;
     
-    const size_t numPasses = sizeof(passes) / sizeof(passes[0]);
+    preprocessor->currentPass = TM32ASM_PP_FILE_INCLUSION;
     
-    for (size_t i = 0; i < numPasses; i++)
+    while (includesFound && inclusionIteration <= maxInclusionIterations)
     {
-        preprocessor->currentPass = passes[i].pass;
-        
         if (preprocessor->verbose)
         {
-            TM32ASM_LogInfo("Executing pass %zu: %s", i + 1, passes[i].name);
+            TM32ASM_LogInfo("Executing File Inclusion pass (iteration %zu)", inclusionIteration);
         }
         
-        if (!passes[i].function(preprocessor))
+        if (!TM32ASM_PassFileInclusion(preprocessor))
         {
-            TM32ASM_LogError("Preprocessor pass '%s' failed", passes[i].name);
+            TM32ASM_LogError("File Inclusion pass failed on iteration %zu", inclusionIteration);
             preprocessor->errorOccurred = true;
             return false;
         }
         
         if (preprocessor->errorOccurred)
         {
-            TM32ASM_LogError("Error occurred during pass '%s'", passes[i].name);
+            TM32ASM_LogError("Error occurred during File Inclusion pass iteration %zu", inclusionIteration);
             return false;
+        }
+        
+        // Check if any .include directives remain for the next iteration
+        // This is normal - included files may contain their own .include directives
+        includesFound = false;
+        if (preprocessor->outputTokenStream != NULL)
+        {
+            // Look for .include directives in the output stream that need processing
+            for (size_t j = 0; j < preprocessor->outputTokenStream->tokenCount; j++)
+            {
+                TM32ASM_Token* token = preprocessor->outputTokenStream->tokens[j];
+                if (token != NULL && 
+                    token->type == TM32ASM_TT_DIRECTIVE && 
+                    token->param == TM32ASM_DT_INCLUDE)
+                {
+                    includesFound = true;
+                    TM32ASM_LogInfo("Found .include directive at line %u for next iteration", token->line);
+                    break;
+                }
+            }
+        }
+        
+        // If no more directives found, we're done with file inclusion
+        if (!includesFound)
+        {
+            TM32ASM_LogInfo("No more .include directives found - file inclusion complete after %zu iterations", inclusionIteration);
+            break;
+        }
+        
+        TM32ASM_LogInfo("Found remaining .include directives - continuing to iteration %zu", inclusionIteration + 1);
+        
+        // CRITICAL FIX: Chain output to input for next iteration
+        // The output of this iteration becomes the input for the next iteration
+        if (preprocessor->outputTokenStream != NULL)
+        {
+            // Destroy the old input stream (unless it's the original input on first iteration)
+            if (preprocessor->inputTokenStream != NULL)
+            {
+                TM32ASM_DestroyTokenStream(preprocessor->inputTokenStream);
+            }
+            
+            // Make the output of this iteration the input to the next iteration
+            preprocessor->inputTokenStream = preprocessor->outputTokenStream;
+            preprocessor->outputTokenStream = TM32ASM_CreateTokenStream();
+            
+            if (preprocessor->outputTokenStream == NULL)
+            {
+                TM32ASM_LogError("Failed to create output token stream for next iteration");
+                preprocessor->errorOccurred = true;
+                return false;
+            }
+        }
+    }
+    
+    if (inclusionIteration > maxInclusionIterations)
+    {
+        TM32ASM_LogError("Maximum file inclusion iterations reached (%zu). Possible circular includes.", 
+                         maxInclusionIterations);
+        preprocessor->errorOccurred = true;
+        return false;
+    }
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("File inclusion completed after %zu iterations", inclusionIteration);
+    }
+    
+    // CRITICAL FIX: After file inclusion, make output stream the input for remaining passes
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        // Destroy the old input stream
+        if (preprocessor->inputTokenStream != NULL)
+        {
+            TM32ASM_DestroyTokenStream(preprocessor->inputTokenStream);
+        }
+        
+        // Make the file inclusion output the input for remaining passes
+        preprocessor->inputTokenStream = preprocessor->outputTokenStream;
+        preprocessor->outputTokenStream = TM32ASM_CreateTokenStream();
+        
+        if (preprocessor->outputTokenStream == NULL)
+        {
+            TM32ASM_LogError("Failed to create output token stream for remaining passes");
+            preprocessor->errorOccurred = true;
+            return false;
+        }
+    }
+    
+    // Execute remaining preprocessor passes in sequence
+    static const struct {
+        TM32ASM_PreprocessorPass pass;
+        bool (*function)(TM32ASM_Preprocessor*);
+        const char* name;
+    } remainingPasses[] = {
+        { TM32ASM_PP_SYMBOL_DECLARATION,     TM32ASM_PassSymbolDeclaration,     "Symbol Declaration" },
+        { TM32ASM_PP_MACRO_EXPANSION,        TM32ASM_PassMacroExpansion,        "Macro Expansion" },
+        { TM32ASM_PP_VARIABLE_EVALUATION,    TM32ASM_PassVariableEvaluation,    "Variable Evaluation" },
+        { TM32ASM_PP_CONTROL_FLOW,           TM32ASM_PassControlFlow,           "Control Flow Processing" },
+        { TM32ASM_PP_FINALIZATION,           TM32ASM_PassFinalization,          "Finalization" },
+        { TM32ASM_PP_NEWLINE_OPTIMIZATION,   TM32ASM_PassNewlineOptimization,   "Newline Optimization" }
+    };
+    
+    const size_t numRemainingPasses = sizeof(remainingPasses) / sizeof(remainingPasses[0]);
+    
+    for (size_t i = 0; i < numRemainingPasses; i++)
+    {
+        preprocessor->currentPass = remainingPasses[i].pass;
+        
+        if (preprocessor->verbose)
+        {
+            TM32ASM_LogInfo("Executing pass %zu: %s", i + 2, remainingPasses[i].name);
+        }
+        
+        if (!remainingPasses[i].function(preprocessor))
+        {
+            TM32ASM_LogError("Preprocessor pass '%s' failed", remainingPasses[i].name);
+            preprocessor->errorOccurred = true;
+            return false;
+        }
+        
+        if (preprocessor->errorOccurred)
+        {
+            TM32ASM_LogError("Error occurred during pass '%s'", remainingPasses[i].name);
+            return false;
+        }
+        
+        // Chain passes together: output of this pass becomes input to next pass
+        if (i < numRemainingPasses - 1 && preprocessor->outputTokenStream != NULL)
+        {
+            // Destroy the old input stream
+            if (preprocessor->inputTokenStream != NULL)
+            {
+                TM32ASM_DestroyTokenStream(preprocessor->inputTokenStream);
+            }
+            
+            // Make the output of this pass the input to the next pass
+            preprocessor->inputTokenStream = preprocessor->outputTokenStream;
+            preprocessor->outputTokenStream = TM32ASM_CreateTokenStream();
+            
+            if (preprocessor->outputTokenStream == NULL)
+            {
+                TM32ASM_LogError("Failed to create output token stream for next pass");
+                preprocessor->errorOccurred = true;
+                return false;
+            }
         }
     }
     
