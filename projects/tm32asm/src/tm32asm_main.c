@@ -54,8 +54,17 @@ static bool TM32ASM_PrintTokens (TM32ASM_TokenStream* tokenStream)
         {
             if (token->lexeme != NULL)
             {
-                printf("[%zu] Type: %d, Param: 0x%04X, Lexeme: \"%s\", Line: %u\n", 
-                       i, token->type, token->param, token->lexeme, token->line);
+                // Don't add quotes around string and character tokens since they already include quotes in their lexeme
+                if (token->type == 15 || token->type == 14) // TM32ASM_TT_STRING or TM32ASM_TT_CHARACTER
+                {
+                    printf("[%zu] Type: %d, Param: 0x%04X, Lexeme: %s, Line: %u\n", 
+                           i, token->type, token->param, token->lexeme, token->line);
+                }
+                else
+                {
+                    printf("[%zu] Type: %d, Param: 0x%04X, Lexeme: \"%s\", Line: %u\n", 
+                           i, token->type, token->param, token->lexeme, token->line);
+                }
             }
             else
             {

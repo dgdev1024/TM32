@@ -798,9 +798,32 @@ static TM32ASM_Token* TM32ASM_TokenizeOperator (TM32ASM_Lexer* lexer)
                     lexeme[1] = nextChar;
                     length = 2;
                 }
+                else if (nextChar == '0')
+                {
+                    // Macro name parameter token @0
+                    tokenType = TM32ASM_TT_PARAM_MACRO_NAME;
+                    lexeme[1] = nextChar;
+                    length = 2;
+                }
+                else if (isdigit(nextChar))
+                {
+                    // Macro positional parameter token @1, @2, etc.
+                    tokenType = TM32ASM_TT_PARAM_POSITIONAL;
+                    lexeme[1] = nextChar;
+                    length = 2;
+                    
+                    // Check for multi-digit numbers (@10, @11, etc.)
+                    size_t extraDigits = 0;
+                    while (isdigit(TM32ASM_PeekCharAt(lexer, 2 + extraDigits)) && extraDigits < 2)
+                    {
+                        lexeme[2 + extraDigits] = TM32ASM_PeekCharAt(lexer, 2 + extraDigits);
+                        extraDigits++;
+                        length++;
+                    }
+                }
                 else
                 {
-                    // Handle macro parameters (@1, @2, etc.)
+                    // Handle other @-prefixed identifiers
                     return TM32ASM_TokenizeIdentifier(lexer);
                 }
                 break;

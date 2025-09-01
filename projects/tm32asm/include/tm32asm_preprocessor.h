@@ -71,6 +71,7 @@ typedef struct
     char*                   value;          /** @brief Symbol value or replacement text */
     char**                  parameters;     /** @brief Parameter names for parametric macros */
     size_t                  parameterCount; /** @brief Number of parameters */
+    TM32ASM_TokenStream*    macroBody;      /** @brief Token stream for parametric macro body */
     bool                    isDefined;      /** @brief Whether the symbol is defined */
     uint32_t                line;           /** @brief Line where symbol is defined */
     const char*             filename;       /** @brief File where symbol is defined */
@@ -130,6 +131,17 @@ typedef struct
 } TM32ASM_ControlFlowContext;
 
 /**
+ * @brief   Represents a macro expansion context for tracking nested macro calls.
+ */
+typedef struct
+{
+    const TM32ASM_Symbol*   macroSymbol;    /** @brief The macro symbol being expanded */
+    TM32ASM_TokenStream**   parameters;     /** @brief Array of parameter token streams */
+    size_t                  parameterCount; /** @brief Number of parameters */
+    size_t                  currentPosition;/** @brief Current position in macro body */
+} TM32ASM_MacroContext;
+
+/**
  * @brief   The TM32 assembler tool's preprocessor component structure.
  */
 typedef struct
@@ -155,10 +167,14 @@ typedef struct
     TM32ASM_ControlFlowContext* controlFlowStack;       /** @brief Stack of control flow contexts */
     size_t                      controlFlowDepth;       /** @brief Current control flow nesting depth */
     
+    // Macro expansion management
+    TM32ASM_MacroContext**      macroStack;             /** @brief Stack of macro expansion contexts */
+    size_t                      macroStackDepth;        /** @brief Current macro expansion depth */
+    uint32_t                    nextUniqueId;           /** @brief Next unique ID for @? mangling */
+    
     // Processing state
     TM32ASM_PreprocessorPass    currentPass;            /** @brief Current processing pass */
     size_t                      currentTokenIndex;      /** @brief Current position in token stream */
-    uint32_t                    macroExpansionDepth;    /** @brief Current macro expansion depth */
     bool                        errorOccurred;          /** @brief Whether an error has occurred */
     
     // Options and flags

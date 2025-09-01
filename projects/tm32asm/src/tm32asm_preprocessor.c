@@ -10,6 +10,7 @@
 /* Include Files **************************************************************/
 
 #include <tm32asm_preprocessor.h>
+#include <ctype.h>
 
 /* Private Constants **********************************************************/
 
@@ -254,7 +255,7 @@ static bool TM32ASM_InitializePreprocessor (
     // Initialize processing state
     preprocessor->currentPass = TM32ASM_PP_FILE_INCLUSION;
     preprocessor->currentTokenIndex = 0;
-    preprocessor->macroExpansionDepth = 0;
+    preprocessor->macroStackDepth = 0;
     preprocessor->errorOccurred = false;
     
     // Initialize options
@@ -401,6 +402,16 @@ static bool TM32ASM_AddSymbol (
     newSymbol->line = symbol->line;
     newSymbol->filename = symbol->filename;
     
+    // Copy macro body for parametric macros
+    if (symbol->macroBody != NULL)
+    {
+        newSymbol->macroBody = symbol->macroBody; // Transfer ownership - don't copy the whole stream
+    }
+    else
+    {
+        newSymbol->macroBody = NULL;
+    }
+    
     // TODO: Handle parameter copying for parametric macros
     newSymbol->parameters = NULL;
     
@@ -451,6 +462,13 @@ static void TM32ASM_DestroySymbol (
             TM32ASM_Destroy(symbol->parameters[i]);
         }
         TM32ASM_Destroy(symbol->parameters);
+    }
+    
+    // Clean up macro body if it exists
+    if (symbol->macroBody != NULL)
+    {
+        TM32ASM_DestroyTokenStream(symbol->macroBody);
+        symbol->macroBody = NULL;
     }
     
     memset(symbol, 0, sizeof(TM32ASM_Symbol));
@@ -924,20 +942,81 @@ static bool TM32ASM_PassSymbolDeclaration (
                         return false;
                     }
                     
+                    // Skip to end of parameter line (if any)
+                    TM32ASM_Token* nextToken = NULL;
+                    while ((nextToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream)) != NULL)
+                    {
+                        if (nextToken->type == TM32ASM_TT_NEWLINE)
+                        {
+                            break;
+                        }
+                        // TODO: Parse and store parameter names for later use
+                    }
+                    
+                    // Capture macro body until .endmacro
+                    TM32ASM_TokenStream* macroBody = TM32ASM_CreateTokenStream();
+                    if (macroBody == NULL)
+                    {
+                        TM32ASM_LogError("Could not create macro body token stream");
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    int macroDepth = 1;
+                    while ((nextToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream)) != NULL && macroDepth > 0)
+                    {
+                        if (nextToken->type == TM32ASM_TT_DIRECTIVE)
+                        {
+                            if (nextToken->param == TM32ASM_DT_MACRO)
+                            {
+                                macroDepth++;
+                            }
+                            else if (nextToken->param == TM32ASM_DT_ENDMACRO)
+                            {
+                                macroDepth--;
+                                if (macroDepth == 0)
+                                {
+                                    break; // Don't include .endmacro in the body
+                                }
+                            }
+                        }
+                        
+                        // Copy token to macro body
+                        TM32ASM_Token* bodyCopy = TM32ASM_CopyToken(nextToken);
+                        if (bodyCopy == NULL)
+                        {
+                            TM32ASM_LogError("Could not copy token to macro body");
+                            TM32ASM_DestroyTokenStream(macroBody);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        
+                        if (TM32ASM_PushTokenBack(macroBody, bodyCopy) == NULL)
+                        {
+                            TM32ASM_LogError("Could not add token to macro body");
+                            TM32ASM_DestroyToken(bodyCopy);
+                            TM32ASM_DestroyTokenStream(macroBody);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                    }
+                    
                     // Create symbol entry for the macro
                     TM32ASM_Symbol symbol = {0};
                     symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
                     symbol.type = TM32ASM_ST_MACRO_PARAMETRIC;
-                    symbol.value = NULL;  // Will be populated during macro expansion pass
-                    symbol.parameters = NULL;  // Will be populated during macro expansion pass
-                    symbol.parameterCount = 0;  // Will be calculated during macro expansion pass
+                    symbol.value = NULL;
+                    symbol.parameters = NULL;
+                    symbol.parameterCount = 0;
                     symbol.isDefined = true;
                     symbol.line = nameToken->line;
                     symbol.filename = nameToken->filename;
+                    symbol.macroBody = macroBody; // Store the captured macro body
                     
                     if (!TM32ASM_AddSymbol(preprocessor, &symbol))
                     {
                         TM32ASM_LogError("Failed to add macro symbol '%s'", nameToken->lexeme);
+                        TM32ASM_DestroyTokenStream(macroBody);
                         TM32ASM_DestroyTokenStream(outputStream);
                         return false;
                     }
@@ -946,6 +1025,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                     {
                         TM32ASM_LogInfo("Recorded parametric macro: %s", nameToken->lexeme);
                     }
+                    skipToken = true; // Don't copy .macro directive to output
                     break;
                 }
                 
@@ -976,11 +1056,11 @@ static bool TM32ASM_PassSymbolDeclaration (
                         return false;
                     }
                     
-                    // Get the replacement text (next token should be string)
+                    // Get the replacement text (next token - can be any type)
                     TM32ASM_Token* valueToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
-                    if (valueToken == NULL || valueToken->type != TM32ASM_TT_STRING)
+                    if (valueToken == NULL)
                     {
-                        TM32ASM_LogError("Expected string after .define identifier at line %u", token->line);
+                        TM32ASM_LogError("Expected value after .define identifier at line %u", token->line);
                         TM32ASM_DestroyTokenStream(outputStream);
                         return false;
                     }
@@ -1007,6 +1087,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                     {
                         TM32ASM_LogInfo("Recorded simple macro: %s = %s", nameToken->lexeme, valueToken->lexeme);
                     }
+                    skipToken = true; // Don't copy .define directive to output
                     break;
                 }
                 
@@ -1073,6 +1154,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                     {
                         TM32ASM_LogInfo("Recorded variable: %s", nameToken->lexeme);
                     }
+                    skipToken = true; // Don't copy .let directive to output
                     break;
                 }
                 
@@ -1137,6 +1219,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                     {
                         TM32ASM_LogInfo("Recorded constant: %s", nameToken->lexeme);
                     }
+                    skipToken = true; // Don't copy .const directive to output
                     break;
                 }
                 
@@ -1194,48 +1277,1457 @@ static bool TM32ASM_PassMacroExpansion (
         TM32ASM_LogInfo("Starting macro expansion pass");
     }
     
-    // TODO: Implement macro expansion logic
-    // This will expand parametric macros first, then simple text substitution macros
+    // Iterative macro expansion to handle nested macro calls
+    // Keep expanding until no more expansions occur
+    bool expansionOccurred = true;
+    int iterationCount = 0;
+    const int maxIterations = 100; // Prevent infinite recursion
     
-    // For now, create a pass-through: copy input to output
-    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
-    if (outputStream == NULL)
-    {
-        TM32ASM_LogError("Could not create output token stream for macro expansion pass");
-        return false;
-    }
+    TM32ASM_TokenStream* workingInput = preprocessor->inputTokenStream;
+    TM32ASM_TokenStream* finalOutput = NULL;
     
-    // Copy all tokens from input to output
-    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    while (expansionOccurred && iterationCount < maxIterations)
     {
-        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
-        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
-        if (copiedToken == NULL)
+        expansionOccurred = false;
+        iterationCount++;
+        
+        if (preprocessor->verbose && iterationCount > 1)
         {
-            TM32ASM_LogError("Could not copy token during macro expansion pass");
-            TM32ASM_DestroyTokenStream(outputStream);
-            return false;
+            TM32ASM_LogInfo("Macro expansion iteration %d", iterationCount);
         }
         
-        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        // Create output token stream for this iteration
+        TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+        if (outputStream == NULL)
         {
-            TM32ASM_LogError("Could not add token to output stream during macro expansion pass");
-            TM32ASM_DestroyToken(copiedToken);
-            TM32ASM_DestroyTokenStream(outputStream);
+            TM32ASM_LogError("Could not create output token stream for macro expansion pass");
+            if (finalOutput != NULL && finalOutput != preprocessor->inputTokenStream)
+            {
+                TM32ASM_DestroyTokenStream(finalOutput);
+            }
             return false;
+        }
+
+        // Process tokens by index for better control
+        for (size_t i = 0; i < workingInput->tokenCount; i++)
+        {
+            TM32ASM_Token* token = workingInput->tokens[i];
+        bool skipToken = false;
+        
+        // Skip macro definition directives - they should not appear in the output
+        if (token->type == TM32ASM_TT_DIRECTIVE && 
+            (token->param == TM32ASM_DT_MACRO || token->param == TM32ASM_DT_DEFINE))
+        {
+            if (token->param == TM32ASM_DT_MACRO)
+            {
+                // Skip entire macro definition until .endmacro
+                skipToken = true;
+                i++; // Skip .macro
+                
+                // Skip macro name and parameters line
+                while (i < preprocessor->inputTokenStream->tokenCount)
+                {
+                    TM32ASM_Token* currentToken = preprocessor->inputTokenStream->tokens[i];
+                    i++;
+                    if (currentToken->type == TM32ASM_TT_NEWLINE)
+                    {
+                        break;
+                    }
+                }
+                
+                // Skip all tokens until .endmacro
+                int macroDepth = 1;
+                while (i < preprocessor->inputTokenStream->tokenCount && macroDepth > 0)
+                {
+                    TM32ASM_Token* currentToken = preprocessor->inputTokenStream->tokens[i];
+                    if (currentToken->type == TM32ASM_TT_DIRECTIVE)
+                    {
+                        if (currentToken->param == TM32ASM_DT_MACRO)
+                        {
+                            macroDepth++;
+                        }
+                        else if (currentToken->param == TM32ASM_DT_ENDMACRO)
+                        {
+                            macroDepth--;
+                        }
+                    }
+                    i++;
+                }
+                i--; // Compensate for the for loop increment
+            }
+            else if (token->param == TM32ASM_DT_DEFINE)
+            {
+                // Skip .define directive and its arguments (name and value)
+                skipToken = true;
+                
+                // Skip the identifier name (next token)
+                if (i + 1 < preprocessor->inputTokenStream->tokenCount)
+                {
+                    i++;
+                }
+                
+                // Skip the string value (next token)
+                if (i + 1 < preprocessor->inputTokenStream->tokenCount)
+                {
+                    i++;
+                }
+            }
+            continue;
+        }
+        
+        // Check for macro invocation (parametric macros)
+        if (token->type == TM32ASM_TT_IDENTIFIER)
+        {
+            if (preprocessor->verbose)
+            {
+                TM32ASM_LogInfo("Checking identifier '%s' for macro expansion", token->lexeme);
+            }
+            
+            TM32ASM_Symbol* macroSymbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
+            if (macroSymbol != NULL && macroSymbol->type == TM32ASM_ST_MACRO_PARAMETRIC)
+            {
+                if (preprocessor->verbose)
+                {
+                    TM32ASM_LogInfo("Found parametric macro '%s', expanding...", token->lexeme);
+                }
+                
+                expansionOccurred = true; // Mark that an expansion occurred
+                skipToken = true; // We're replacing this token with expanded content
+                
+                // Parse parameters until newline
+                TM32ASM_TokenStream** parameters = NULL;
+                size_t parameterCount = 0;
+                i++; // Move past macro name
+                
+                // Collect parameters
+                TM32ASM_TokenStream* currentParam = TM32ASM_CreateTokenStream();
+                if (currentParam == NULL)
+                {
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                
+                while (i < preprocessor->inputTokenStream->tokenCount)
+                {
+                    TM32ASM_Token* paramToken = preprocessor->inputTokenStream->tokens[i];
+                    
+                    if (paramToken->type == TM32ASM_TT_NEWLINE)
+                    {
+                        // End of parameter list
+                        if (currentParam->tokenCount > 0)
+                        {
+                            parameters = realloc(parameters, sizeof(TM32ASM_TokenStream*) * (parameterCount + 1));
+                            if (parameters == NULL)
+                            {
+                                TM32ASM_DestroyTokenStream(currentParam);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            parameters[parameterCount] = currentParam;
+                            parameterCount++;
+                        }
+                        else
+                        {
+                            TM32ASM_DestroyTokenStream(currentParam);
+                        }
+                        break;
+                    }
+                    else if (paramToken->type == TM32ASM_TT_COMMA)
+                    {
+                        // End of current parameter
+                        if (currentParam->tokenCount > 0)
+                        {
+                            parameters = realloc(parameters, sizeof(TM32ASM_TokenStream*) * (parameterCount + 1));
+                            if (parameters == NULL)
+                            {
+                                TM32ASM_DestroyTokenStream(currentParam);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            parameters[parameterCount] = currentParam;
+                            parameterCount++;
+                        }
+                        else
+                        {
+                            TM32ASM_DestroyTokenStream(currentParam);
+                        }
+                        
+                        // Start new parameter
+                        currentParam = TM32ASM_CreateTokenStream();
+                        if (currentParam == NULL)
+                        {
+                            for (size_t j = 0; j < parameterCount; j++)
+                            {
+                                TM32ASM_DestroyTokenStream(parameters[j]);
+                            }
+                            free(parameters);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        // Add token to current parameter
+                        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(paramToken);
+                        if (copiedToken == NULL)
+                        {
+                            TM32ASM_DestroyTokenStream(currentParam);
+                            for (size_t j = 0; j < parameterCount; j++)
+                            {
+                                TM32ASM_DestroyTokenStream(parameters[j]);
+                            }
+                            free(parameters);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        
+                        if (TM32ASM_PushTokenBack(currentParam, copiedToken) == NULL)
+                        {
+                            TM32ASM_DestroyToken(copiedToken);
+                            TM32ASM_DestroyTokenStream(currentParam);
+                            for (size_t j = 0; j < parameterCount; j++)
+                            {
+                                TM32ASM_DestroyTokenStream(parameters[j]);
+                            }
+                            free(parameters);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                    }
+                    
+                    i++;
+                }
+                
+                // Expand macro body with parameter substitution
+                if (macroSymbol->macroBody != NULL)
+                {
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Expanding macro body with %zu tokens", macroSymbol->macroBody->tokenCount);
+                    }
+                    
+                    for (size_t bodyIndex = 0; bodyIndex < macroSymbol->macroBody->tokenCount; bodyIndex++)
+                    {
+                        TM32ASM_Token* bodyToken = macroSymbol->macroBody->tokens[bodyIndex];
+                        bool tokenHandled = false;
+                        
+                        // Handle .shift directive
+                        if (bodyToken->type == TM32ASM_TT_DIRECTIVE && bodyToken->param == TM32ASM_DT_SHIFT)
+                        {
+                            // Get the shift count from the next token
+                            int shiftCount = 1; // Default shift count
+                            if (bodyIndex + 1 < macroSymbol->macroBody->tokenCount)
+                            {
+                                TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                if (nextToken != NULL && nextToken->type == TM32ASM_TT_DECIMAL)
+                                {
+                                    shiftCount = atoi(nextToken->lexeme);
+                                    bodyIndex++; // Skip the shift count token
+                                }
+                            }
+                            
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Processing .shift %d directive", shiftCount);
+                            }
+                            
+                            // Shift parameters by removing the specified number from the front
+                            if (shiftCount == 0)
+                            {
+                                // Shift 0 does nothing, but log it for completeness
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("After shift: %zu parameters remaining (no change)", parameterCount);
+                                }
+                            }
+                            else if (shiftCount > 0 && (size_t)shiftCount <= parameterCount)
+                            {
+                                // Destroy the parameters we're shifting out
+                                for (int i = 0; i < shiftCount; i++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[i]);
+                                }
+                                
+                                // Move remaining parameters forward
+                                for (size_t i = 0; i < parameterCount - shiftCount; i++)
+                                {
+                                    parameters[i] = parameters[i + shiftCount];
+                                }
+                                
+                                // Update parameter count
+                                parameterCount -= shiftCount;
+                                
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("After shift: %zu parameters remaining", parameterCount);
+                                }
+                            }
+                            else if (shiftCount > 0)
+                            {
+                                // Shift count exceeds available parameters - clear all parameters
+                                for (size_t i = 0; i < parameterCount; i++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[i]);
+                                }
+                                parameterCount = 0;
+                                
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("After shift: all parameters removed");
+                                }
+                            }
+                            
+                            tokenHandled = true; // Don't copy .shift directive to output
+                        }
+                        // Check for parameter substitution (@1, @2, etc.)
+                        else if (bodyToken->type == TM32ASM_TT_IDENTIFIER && bodyToken->lexeme != NULL &&
+                            bodyToken->lexeme[0] == '@' && isdigit(bodyToken->lexeme[1]))
+                        {
+                            int paramIndex = atoi(bodyToken->lexeme + 1) - 1; // Convert to 0-based
+                            if (paramIndex >= 0 && (size_t)paramIndex < parameterCount)
+                            {
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("Substituting parameter %d", paramIndex + 1);
+                                }
+                                
+                                // Substitute with parameter tokens
+                                TM32ASM_TokenStream* paramStream = parameters[paramIndex];
+                                for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                {
+                                    TM32ASM_Token* copiedToken = TM32ASM_CopyToken(paramStream->tokens[j]);
+                                    if (copiedToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(copiedToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                }
+                                tokenHandled = true;
+                            }
+                        }
+                        // Handle special parameter tokens
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_POSITIONAL)
+                        {
+                            // @1, @2, etc. - extract parameter index from lexeme
+                            if (bodyToken->lexeme != NULL && bodyToken->lexeme[0] == '@' && isdigit(bodyToken->lexeme[1]))
+                            {
+                                int paramIndex = atoi(bodyToken->lexeme + 1) - 1; // Convert to 0-based
+                                if (paramIndex >= 0 && (size_t)paramIndex < parameterCount)
+                                {
+                                    if (preprocessor->verbose)
+                                    {
+                                        TM32ASM_LogInfo("Substituting positional parameter %d", paramIndex + 1);
+                                    }
+                                    
+                                    // Get the parameter token stream
+                                    TM32ASM_TokenStream* paramStream = parameters[paramIndex];
+                                    
+                                    // Check if merging is needed with previous or next tokens
+                                    bool shouldMergePrev = false;
+                                    bool shouldMergeNext = false;
+                                    
+                                    // Check for prefix merging (previous token)
+                                    if (bodyIndex > 0)
+                                    {
+                                        TM32ASM_Token* prevToken = macroSymbol->macroBody->tokens[bodyIndex - 1];
+                                        if (prevToken != NULL && prevToken->type == TM32ASM_TT_IDENTIFIER)
+                                        {
+                                            // Check if this token was already processed (to avoid double-processing)
+                                            if (outputStream->tokenCount > 0)
+                                            {
+                                                TM32ASM_Token* lastToken = outputStream->tokens[outputStream->tokenCount - 1];
+                                                if (lastToken != NULL && lastToken->type == TM32ASM_TT_IDENTIFIER &&
+                                                    strcmp(lastToken->lexeme, prevToken->lexeme) == 0)
+                                                {
+                                                    shouldMergePrev = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Check for suffix merging (next token)
+                                    if (bodyIndex + 1 < macroSymbol->macroBody->tokenCount)
+                                    {
+                                        TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                        if (nextToken != NULL && nextToken->type == TM32ASM_TT_IDENTIFIER)
+                                        {
+                                            shouldMergeNext = true;
+                                        }
+                                    }
+                                    
+                                    // If no merging is needed and parameter is a single token, preserve its type
+                                    if (!shouldMergePrev && !shouldMergeNext && paramStream->tokenCount == 1)
+                                    {
+                                        TM32ASM_Token* paramToken = paramStream->tokens[0];
+                                        TM32ASM_Token* resultToken = TM32ASM_CopyToken(paramToken);
+                                        if (resultToken == NULL)
+                                        {
+                                            for (size_t k = 0; k < parameterCount; k++)
+                                            {
+                                                TM32ASM_DestroyTokenStream(parameters[k]);
+                                            }
+                                            free(parameters);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        resultToken->filename = bodyToken->filename;
+                                        resultToken->line = bodyToken->line;
+                                        
+                                        if (TM32ASM_PushTokenBack(outputStream, resultToken) == NULL)
+                                        {
+                                            TM32ASM_DestroyToken(resultToken);
+                                            for (size_t k = 0; k < parameterCount; k++)
+                                            {
+                                                TM32ASM_DestroyTokenStream(parameters[k]);
+                                            }
+                                            free(parameters);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        tokenHandled = true;
+                                    }
+                                    else
+                                    {
+                                        // Merging is needed or multiple tokens, use string-based approach
+                                        char paramValue[256] = {0};
+                                        
+                                        // Concatenate all tokens in the parameter to form the substitution string
+                                        for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                        {
+                                            if (j > 0 && strlen(paramValue) + 1 < sizeof(paramValue))
+                                            {
+                                                strcat(paramValue, " "); // Add space between tokens if needed
+                                            }
+                                            if (strlen(paramValue) + strlen(paramStream->tokens[j]->lexeme) < sizeof(paramValue))
+                                            {
+                                                strcat(paramValue, paramStream->tokens[j]->lexeme);
+                                            }
+                                        }
+                                        
+                                        // Perform the merging logic
+                                        char mergedId[512] = {0};
+                                        
+                                        if (shouldMergePrev)
+                                        {
+                                            // Remove the last token since we'll replace it with the merged one
+                                            TM32ASM_Token* lastToken = outputStream->tokens[outputStream->tokenCount - 1];
+                                            strcpy(mergedId, lastToken->lexeme);
+                                            strcat(mergedId, paramValue);
+                                            TM32ASM_DestroyToken(lastToken);
+                                            outputStream->tokenCount--;
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Merging preceding identifier with @%d: %s + %s -> %s", 
+                                                              paramIndex + 1, lastToken->lexeme, paramValue, mergedId);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            strcpy(mergedId, paramValue);
+                                        }
+                                        
+                                        // Check for suffix merging (next token)
+                                        if (shouldMergeNext)
+                                        {
+                                            TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                            // Merge the parameter value with the following identifier
+                                            strncat(mergedId, nextToken->lexeme, sizeof(mergedId) - strlen(mergedId) - 1);
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Merging @%d with following identifier: %s -> %s", 
+                                                              paramIndex + 1, nextToken->lexeme, mergedId);
+                                            }
+                                        }
+                                    
+                                    TM32ASM_Token* resultToken = TM32ASM_CreateToken(mergedId, TM32ASM_TT_IDENTIFIER);
+                                    if (resultToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    resultToken->filename = bodyToken->filename;
+                                    resultToken->line = bodyToken->line;
+                                    
+                                    if (TM32ASM_PushTokenBack(outputStream, resultToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(resultToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    
+                                    // If we merged with the next token, skip it in the next iteration
+                                    if (shouldMergeNext)
+                                    {
+                                        bodyIndex++; // Skip the next token since we merged it
+                                    }
+                                    
+                                    tokenHandled = true;
+                                    }
+                                }
+                            }
+                        }
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_MACRO_NAME)
+                        {
+                            // @0 - expands to macro name, with identifier merging support
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Substituting macro name: %s", macroSymbol->name);
+                            }
+                            
+                            // Check if the previous token is an identifier that should be merged (prefix)
+                            char mergedId[512] = {0};
+                            bool shouldMergePrev = false;
+                            
+                            if (bodyIndex > 0)
+                            {
+                                TM32ASM_Token* prevToken = macroSymbol->macroBody->tokens[bodyIndex - 1];
+                                if (prevToken != NULL && prevToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Check if this token was already processed (to avoid double-processing)
+                                    if (outputStream->tokenCount > 0)
+                                    {
+                                        TM32ASM_Token* lastToken = outputStream->tokens[outputStream->tokenCount - 1];
+                                        if (lastToken != NULL && lastToken->type == TM32ASM_TT_IDENTIFIER &&
+                                            strcmp(lastToken->lexeme, prevToken->lexeme) == 0)
+                                        {
+                                            // The previous token was just added, we need to merge with it
+                                            strcpy(mergedId, prevToken->lexeme);
+                                            strcat(mergedId, macroSymbol->name);
+                                            shouldMergePrev = true;
+                                            // Remove the last token since we'll replace it with the merged one
+                                            TM32ASM_DestroyToken(lastToken);
+                                            outputStream->tokenCount--;
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Merging preceding identifier with @0: %s + %s -> %s", 
+                                                              prevToken->lexeme, macroSymbol->name, mergedId);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if (!shouldMergePrev)
+                            {
+                                strcpy(mergedId, macroSymbol->name);
+                            }
+                            
+                            // Check if the next token is an identifier that should be merged (suffix)
+                            bool shouldMergeNext = false;
+                            
+                            if (bodyIndex + 1 < macroSymbol->macroBody->tokenCount)
+                            {
+                                TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                if (nextToken != NULL && nextToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Merge the macro name with the following identifier
+                                    strncat(mergedId, nextToken->lexeme, sizeof(mergedId) - strlen(mergedId) - 1);
+                                    shouldMergeNext = true;
+                                    if (preprocessor->verbose)
+                                    {
+                                        TM32ASM_LogInfo("Merging @0 with following identifier: %s -> %s", 
+                                                      nextToken->lexeme, mergedId);
+                                    }
+                                }
+                            }
+                            
+                            TM32ASM_Token* resultToken = TM32ASM_CreateToken(mergedId, TM32ASM_TT_IDENTIFIER);
+                            if (resultToken == NULL)
+                            {
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            resultToken->filename = bodyToken->filename;
+                            resultToken->line = bodyToken->line;
+                            
+                            if (TM32ASM_PushTokenBack(outputStream, resultToken) == NULL)
+                            {
+                                TM32ASM_DestroyToken(resultToken);
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            
+                            // If we merged with the next token, skip it in the next iteration
+                            if (shouldMergeNext)
+                            {
+                                bodyIndex++; // Skip the next token since we merged it
+                            }
+                            
+                            tokenHandled = true;
+                        }
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_COUNT)
+                        {
+                            // @# or @NARG - expands to parameter count, with identifier merging support
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Substituting parameter count: %zu", parameterCount);
+                            }
+                            
+                            char countStr[32];
+                            snprintf(countStr, sizeof(countStr), "%zu", parameterCount);
+                            
+                            // Check if the previous token is an identifier that should be merged (prefix)
+                            char mergedId[512] = {0};
+                            bool shouldMergePrev = false;
+                            
+                            if (bodyIndex > 0)
+                            {
+                                TM32ASM_Token* prevToken = macroSymbol->macroBody->tokens[bodyIndex - 1];
+                                if (prevToken != NULL && prevToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Check if this token was already processed (to avoid double-processing)
+                                    if (outputStream->tokenCount > 0)
+                                    {
+                                        TM32ASM_Token* lastToken = outputStream->tokens[outputStream->tokenCount - 1];
+                                        if (lastToken != NULL && lastToken->type == TM32ASM_TT_IDENTIFIER &&
+                                            strcmp(lastToken->lexeme, prevToken->lexeme) == 0)
+                                        {
+                                            // The previous token was just added, we need to merge with it
+                                            strcpy(mergedId, prevToken->lexeme);
+                                            strcat(mergedId, countStr);
+                                            shouldMergePrev = true;
+                                            // Remove the last token since we'll replace it with the merged one
+                                            TM32ASM_DestroyToken(lastToken);
+                                            outputStream->tokenCount--;
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Merging preceding identifier with @#: %s + %s -> %s", 
+                                                              prevToken->lexeme, countStr, mergedId);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if (!shouldMergePrev)
+                            {
+                                strcpy(mergedId, countStr);
+                            }
+                            
+                            // Check if the next token is an identifier that should be merged (suffix)
+                            bool shouldMergeNext = false;
+                            TM32ASM_TokenType resultTokenType = TM32ASM_TT_DECIMAL; // Default to decimal if no merging
+                            
+                            if (bodyIndex + 1 < macroSymbol->macroBody->tokenCount)
+                            {
+                                TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                if (nextToken != NULL && nextToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Merge the parameter count with the following identifier
+                                    strncat(mergedId, nextToken->lexeme, sizeof(mergedId) - strlen(mergedId) - 1);
+                                    shouldMergeNext = true;
+                                    resultTokenType = TM32ASM_TT_IDENTIFIER; // Result is an identifier
+                                    if (preprocessor->verbose)
+                                    {
+                                        TM32ASM_LogInfo("Merging @# with following identifier: %s -> %s", 
+                                                      nextToken->lexeme, mergedId);
+                                    }
+                                }
+                            }
+                            
+                            // If we merged with any identifier, the result should be an identifier
+                            if (shouldMergePrev)
+                            {
+                                resultTokenType = TM32ASM_TT_IDENTIFIER;
+                            }
+                            
+                            TM32ASM_Token* resultToken = TM32ASM_CreateToken(mergedId, resultTokenType);
+                            if (resultToken == NULL)
+                            {
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            resultToken->filename = bodyToken->filename;
+                            resultToken->line = bodyToken->line;
+                            
+                            if (TM32ASM_PushTokenBack(outputStream, resultToken) == NULL)
+                            {
+                                TM32ASM_DestroyToken(resultToken);
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            
+                            // If we merged with the next token, skip it in the next iteration
+                            if (shouldMergeNext)
+                            {
+                                bodyIndex++; // Skip the next token since we merged it
+                            }
+                            
+                            tokenHandled = true;
+                        }
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_LIST)
+                        {
+                            // @* - expands to all parameters separated by commas
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Substituting all parameters");
+                            }
+                            
+                            for (size_t paramIdx = 0; paramIdx < parameterCount; paramIdx++)
+                            {
+                                if (paramIdx > 0)
+                                {
+                                    // Add comma separator
+                                    TM32ASM_Token* commaToken = TM32ASM_CreateToken(",", TM32ASM_TT_COMMA);
+                                    if (commaToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    commaToken->filename = bodyToken->filename;
+                                    commaToken->line = bodyToken->line;
+                                    
+                                    if (TM32ASM_PushTokenBack(outputStream, commaToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(commaToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                }
+                                
+                                // Add parameter tokens
+                                TM32ASM_TokenStream* paramStream = parameters[paramIdx];
+                                for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                {
+                                    TM32ASM_Token* copiedToken = TM32ASM_CopyToken(paramStream->tokens[j]);
+                                    if (copiedToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(copiedToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                }
+                            }
+                            tokenHandled = true;
+                        }
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_LIST_NOT_FIRST)
+                        {
+                            // @- - expands to all parameters except the first, separated by commas
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Substituting all parameters except first");
+                            }
+                            
+                            for (size_t paramIdx = 1; paramIdx < parameterCount; paramIdx++)
+                            {
+                                if (paramIdx > 1)
+                                {
+                                    // Add comma separator
+                                    TM32ASM_Token* commaToken = TM32ASM_CreateToken(",", TM32ASM_TT_COMMA);
+                                    if (commaToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    commaToken->filename = bodyToken->filename;
+                                    commaToken->line = bodyToken->line;
+                                    
+                                    if (TM32ASM_PushTokenBack(outputStream, commaToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(commaToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                }
+                                
+                                // Add parameter tokens
+                                TM32ASM_TokenStream* paramStream = parameters[paramIdx];
+                                for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                {
+                                    TM32ASM_Token* copiedToken = TM32ASM_CopyToken(paramStream->tokens[j]);
+                                    if (copiedToken == NULL)
+                                    {
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                    if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+                                    {
+                                        TM32ASM_DestroyToken(copiedToken);
+                                        for (size_t k = 0; k < parameterCount; k++)
+                                        {
+                                            TM32ASM_DestroyTokenStream(parameters[k]);
+                                        }
+                                        free(parameters);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                    }
+                                }
+                            }
+                            tokenHandled = true;
+                        }
+                        else if (bodyToken->type == TM32ASM_TT_PARAM_MANGLE_UNIQUE)
+                        {
+                            // @? - expands to unique identifier based on macro name and line number
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Substituting unique identifier for macro %s at line %u", 
+                                              macroSymbol->name, token->line);
+                            }
+                            
+                            char uniqueId[256];
+                            snprintf(uniqueId, sizeof(uniqueId), "_%s_%u", macroSymbol->name, token->line);
+                            
+                            // Check if the previous token is an identifier that should be merged (prefix)
+                            char mergedId[512] = {0};
+                            bool shouldMergePrev = false;
+                            
+                            if (bodyIndex > 0)
+                            {
+                                TM32ASM_Token* prevToken = macroSymbol->macroBody->tokens[bodyIndex - 1];
+                                if (prevToken != NULL && prevToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Check if this token was already processed (to avoid double-processing)
+                                    // We'll mark it as handled by checking the output stream's last token
+                                    if (outputStream->tokenCount > 0)
+                                    {
+                                        TM32ASM_Token* lastToken = outputStream->tokens[outputStream->tokenCount - 1];
+                                        if (lastToken != NULL && lastToken->type == TM32ASM_TT_IDENTIFIER &&
+                                            strcmp(lastToken->lexeme, prevToken->lexeme) == 0)
+                                        {
+                                            // The previous token was just added, we need to merge with it
+                                            strcpy(mergedId, prevToken->lexeme);
+                                            strcat(mergedId, uniqueId);
+                                            shouldMergePrev = true;
+                                            // Remove the last token since we'll replace it with the merged one
+                                            TM32ASM_DestroyToken(lastToken);
+                                            outputStream->tokenCount--;
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Merging preceding identifier with @?: %s + %s -> %s", 
+                                                              prevToken->lexeme, uniqueId, mergedId);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if (!shouldMergePrev)
+                            {
+                                strcpy(mergedId, uniqueId);
+                            }
+                            
+                            // Check if the next token is an identifier that should be merged (suffix)
+                            bool shouldMergeNext = false;
+                            
+                            if (bodyIndex + 1 < macroSymbol->macroBody->tokenCount)
+                            {
+                                TM32ASM_Token* nextToken = macroSymbol->macroBody->tokens[bodyIndex + 1];
+                                if (nextToken != NULL && nextToken->type == TM32ASM_TT_IDENTIFIER)
+                                {
+                                    // Merge the unique identifier with the following identifier
+                                    strncat(mergedId, nextToken->lexeme, sizeof(mergedId) - strlen(mergedId) - 1);
+                                    shouldMergeNext = true;
+                                    if (preprocessor->verbose)
+                                    {
+                                        TM32ASM_LogInfo("Merging @? with following identifier: %s -> %s", 
+                                                      nextToken->lexeme, mergedId);
+                                    }
+                                }
+                            }
+                            
+                            TM32ASM_Token* uniqueToken = TM32ASM_CreateToken(mergedId, TM32ASM_TT_IDENTIFIER);
+                            if (uniqueToken == NULL)
+                            {
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            uniqueToken->filename = bodyToken->filename;
+                            uniqueToken->line = bodyToken->line;
+                            
+                            if (TM32ASM_PushTokenBack(outputStream, uniqueToken) == NULL)
+                            {
+                                TM32ASM_DestroyToken(uniqueToken);
+                                for (size_t k = 0; k < parameterCount; k++)
+                                {
+                                    TM32ASM_DestroyTokenStream(parameters[k]);
+                                }
+                                free(parameters);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                            
+                            // If we merged with the next token, skip it in the next iteration
+                            if (shouldMergeNext)
+                            {
+                                bodyIndex++; // Skip the next token since we merged it
+                            }
+                            
+                            tokenHandled = true;
+                        }
+                        
+                        if (!tokenHandled)
+                        {
+                            // Check if this is a string literal that contains parameter placeholders
+                            bool hasParameterPlaceholders = false;
+                            if (bodyToken->type == TM32ASM_TT_STRING && bodyToken->lexeme != NULL)
+                            {
+                                // Check for @? or special parameter tokens
+                                if (strstr(bodyToken->lexeme, "@?") != NULL ||
+                                    strstr(bodyToken->lexeme, "@0") != NULL ||
+                                    strstr(bodyToken->lexeme, "@#") != NULL ||
+                                    strstr(bodyToken->lexeme, "@*") != NULL ||
+                                    strstr(bodyToken->lexeme, "@-") != NULL)
+                                {
+                                    hasParameterPlaceholders = true;
+                                }
+                                else
+                                {
+                                    // Check for positional parameters
+                                    for (size_t i = 1; i <= parameterCount; i++)
+                                    {
+                                        char paramPattern[8];
+                                        snprintf(paramPattern, sizeof(paramPattern), "@%zu", i);
+                                        if (strstr(bodyToken->lexeme, paramPattern) != NULL)
+                                        {
+                                            hasParameterPlaceholders = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if (hasParameterPlaceholders)
+                            {
+                                // String contains parameter placeholders - need to expand them
+                                char expandedString[1024];
+                                strcpy(expandedString, bodyToken->lexeme);
+                                
+                                // First, handle @? placeholders
+                                if (strstr(expandedString, "@?") != NULL)
+                                {
+                                    // Generate unique identifier for @?
+                                    char uniqueId[256];
+                                    snprintf(uniqueId, sizeof(uniqueId), "_%s_%u", macroSymbol->name, token->line);
+                                    
+                                    // Replace @? with unique identifier in the string
+                                    char* pos = strstr(expandedString, "@?");
+                                    while (pos != NULL)
+                                    {
+                                        // Calculate lengths
+                                        size_t beforeLen = pos - expandedString;
+                                        size_t afterLen = strlen(pos + 2); // +2 to skip "@?"
+                                        
+                                        // Create new string with substitution
+                                        char newString[1024];
+                                        strncpy(newString, expandedString, beforeLen);
+                                        newString[beforeLen] = '\0';
+                                        strcat(newString, uniqueId);
+                                        strcat(newString, pos + 2);
+                                        
+                                        strcpy(expandedString, newString);
+                                        
+                                        if (preprocessor->verbose)
+                                        {
+                                            TM32ASM_LogInfo("Substituted @? in string literal: %s", expandedString);
+                                        }
+                                        
+                                        // Look for next occurrence
+                                        pos = strstr(expandedString + beforeLen + strlen(uniqueId), "@?");
+                                    }
+                                }
+                                
+                                // Then, handle positional parameters (@1, @2, etc.)
+                                for (size_t paramIdx = 1; paramIdx <= parameterCount; paramIdx++)
+                                {
+                                    char paramPattern[8];
+                                    snprintf(paramPattern, sizeof(paramPattern), "@%zu", paramIdx);
+                                    
+                                    if (strstr(expandedString, paramPattern) != NULL)
+                                    {
+                                        // Get the parameter value as a single string
+                                        TM32ASM_TokenStream* paramStream = parameters[paramIdx - 1];
+                                        char paramValue[256] = {0};
+                                        
+                                        // Concatenate all tokens in the parameter to form the substitution string
+                                        for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                        {
+                                            if (j > 0 && strlen(paramValue) + 1 < sizeof(paramValue))
+                                            {
+                                                strcat(paramValue, " "); // Add space between tokens
+                                            }
+                                            if (strlen(paramValue) + strlen(paramStream->tokens[j]->lexeme) < sizeof(paramValue))
+                                            {
+                                                strcat(paramValue, paramStream->tokens[j]->lexeme);
+                                            }
+                                        }
+                                        
+                                        // Replace all occurrences of this parameter pattern
+                                        char* pos = strstr(expandedString, paramPattern);
+                                        while (pos != NULL)
+                                        {
+                                            // Calculate lengths
+                                            size_t beforeLen = pos - expandedString;
+                                            size_t afterLen = strlen(pos + strlen(paramPattern));
+                                            
+                                            // Create new string with substitution
+                                            char newString[1024];
+                                            strncpy(newString, expandedString, beforeLen);
+                                            newString[beforeLen] = '\0';
+                                            strcat(newString, paramValue);
+                                            strcat(newString, pos + strlen(paramPattern));
+                                            
+                                            strcpy(expandedString, newString);
+                                            
+                                            if (preprocessor->verbose)
+                                            {
+                                                TM32ASM_LogInfo("Substituted @%zu with '%s' in string literal", paramIdx, paramValue);
+                                            }
+                                            
+                                            // Look for next occurrence of this parameter
+                                            pos = strstr(expandedString + beforeLen + strlen(paramValue), paramPattern);
+                                        }
+                                    }
+                                }
+                                
+                                // Handle @0 (macro name) in string literals
+                                if (strstr(expandedString, "@0") != NULL)
+                                {
+                                    char* pos = strstr(expandedString, "@0");
+                                    while (pos != NULL)
+                                    {
+                                        // Calculate lengths
+                                        size_t beforeLen = pos - expandedString;
+                                        size_t afterLen = strlen(pos + 2); // +2 to skip "@0"
+                                        
+                                        // Create new string with substitution
+                                        char newString[1024];
+                                        strncpy(newString, expandedString, beforeLen);
+                                        newString[beforeLen] = '\0';
+                                        strcat(newString, macroSymbol->name);
+                                        strcat(newString, pos + 2);
+                                        
+                                        strcpy(expandedString, newString);
+                                        
+                                        if (preprocessor->verbose)
+                                        {
+                                            TM32ASM_LogInfo("Substituted @0 with '%s' in string literal", macroSymbol->name);
+                                        }
+                                        
+                                        // Look for next occurrence
+                                        pos = strstr(expandedString + beforeLen + strlen(macroSymbol->name), "@0");
+                                    }
+                                }
+                                
+                                // Handle @# (parameter count) in string literals
+                                if (strstr(expandedString, "@#") != NULL)
+                                {
+                                    char countStr[32];
+                                    snprintf(countStr, sizeof(countStr), "%zu", parameterCount);
+                                    
+                                    char* pos = strstr(expandedString, "@#");
+                                    while (pos != NULL)
+                                    {
+                                        // Calculate lengths
+                                        size_t beforeLen = pos - expandedString;
+                                        size_t afterLen = strlen(pos + 2); // +2 to skip "@#"
+                                        
+                                        // Create new string with substitution
+                                        char newString[1024];
+                                        strncpy(newString, expandedString, beforeLen);
+                                        newString[beforeLen] = '\0';
+                                        strcat(newString, countStr);
+                                        strcat(newString, pos + 2);
+                                        
+                                        strcpy(expandedString, newString);
+                                        
+                                        if (preprocessor->verbose)
+                                        {
+                                            TM32ASM_LogInfo("Substituted @# with '%s' in string literal", countStr);
+                                        }
+                                        
+                                        // Look for next occurrence
+                                        pos = strstr(expandedString + beforeLen + strlen(countStr), "@#");
+                                    }
+                                }
+                                
+                                // Handle @* (all parameters) in string literals
+                                if (strstr(expandedString, "@*") != NULL)
+                                {
+                                    // Build string with all parameters separated by commas
+                                    char allParams[512] = {0};
+                                    for (size_t paramIdx = 0; paramIdx < parameterCount; paramIdx++)
+                                    {
+                                        if (paramIdx > 0)
+                                        {
+                                            strcat(allParams, ", ");
+                                        }
+                                        
+                                        TM32ASM_TokenStream* paramStream = parameters[paramIdx];
+                                        for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                        {
+                                            if (j > 0 && strlen(allParams) + 1 < sizeof(allParams))
+                                            {
+                                                strcat(allParams, " ");
+                                            }
+                                            if (strlen(allParams) + strlen(paramStream->tokens[j]->lexeme) < sizeof(allParams))
+                                            {
+                                                strcat(allParams, paramStream->tokens[j]->lexeme);
+                                            }
+                                        }
+                                    }
+                                    
+                                    char* pos = strstr(expandedString, "@*");
+                                    while (pos != NULL)
+                                    {
+                                        // Calculate lengths
+                                        size_t beforeLen = pos - expandedString;
+                                        size_t afterLen = strlen(pos + 2); // +2 to skip "@*"
+                                        
+                                        // Create new string with substitution
+                                        char newString[1024];
+                                        strncpy(newString, expandedString, beforeLen);
+                                        newString[beforeLen] = '\0';
+                                        strcat(newString, allParams);
+                                        strcat(newString, pos + 2);
+                                        
+                                        strcpy(expandedString, newString);
+                                        
+                                        if (preprocessor->verbose)
+                                        {
+                                            TM32ASM_LogInfo("Substituted @* with '%s' in string literal", allParams);
+                                        }
+                                        
+                                        // Look for next occurrence
+                                        pos = strstr(expandedString + beforeLen + strlen(allParams), "@*");
+                                    }
+                                }
+                                
+                                // Handle @- (all parameters but first) in string literals
+                                if (strstr(expandedString, "@-") != NULL)
+                                {
+                                    // Build string with all parameters except first, separated by commas
+                                    char allButFirst[512] = {0};
+                                    for (size_t paramIdx = 1; paramIdx < parameterCount; paramIdx++) // Start from 1 to skip first
+                                    {
+                                        if (paramIdx > 1)
+                                        {
+                                            strcat(allButFirst, ", ");
+                                        }
+                                        
+                                        TM32ASM_TokenStream* paramStream = parameters[paramIdx];
+                                        for (size_t j = 0; j < paramStream->tokenCount; j++)
+                                        {
+                                            if (j > 0 && strlen(allButFirst) + 1 < sizeof(allButFirst))
+                                            {
+                                                strcat(allButFirst, " ");
+                                            }
+                                            if (strlen(allButFirst) + strlen(paramStream->tokens[j]->lexeme) < sizeof(allButFirst))
+                                            {
+                                                strcat(allButFirst, paramStream->tokens[j]->lexeme);
+                                            }
+                                        }
+                                    }
+                                    
+                                    char* pos = strstr(expandedString, "@-");
+                                    while (pos != NULL)
+                                    {
+                                        // Calculate lengths
+                                        size_t beforeLen = pos - expandedString;
+                                        size_t afterLen = strlen(pos + 2); // +2 to skip "@-"
+                                        
+                                        // Create new string with substitution
+                                        char newString[1024];
+                                        strncpy(newString, expandedString, beforeLen);
+                                        newString[beforeLen] = '\0';
+                                        strcat(newString, allButFirst);
+                                        strcat(newString, pos + 2);
+                                        
+                                        strcpy(expandedString, newString);
+                                        
+                                        if (preprocessor->verbose)
+                                        {
+                                            TM32ASM_LogInfo("Substituted @- with '%s' in string literal", allButFirst);
+                                        }
+                                        
+                                        // Look for next occurrence
+                                        pos = strstr(expandedString + beforeLen + strlen(allButFirst), "@-");
+                                    }
+                                }
+                                
+                                // Create new string token with expanded content
+                                TM32ASM_Token* expandedToken = TM32ASM_CreateToken(expandedString, TM32ASM_TT_STRING);
+                                if (expandedToken == NULL)
+                                {
+                                    for (size_t k = 0; k < parameterCount; k++)
+                                    {
+                                        TM32ASM_DestroyTokenStream(parameters[k]);
+                                    }
+                                    free(parameters);
+                                    TM32ASM_DestroyTokenStream(outputStream);
+                                    return false;
+                                }
+                                expandedToken->filename = bodyToken->filename;
+                                expandedToken->line = bodyToken->line;
+                                
+                                if (TM32ASM_PushTokenBack(outputStream, expandedToken) == NULL)
+                                {
+                                    TM32ASM_DestroyToken(expandedToken);
+                                    for (size_t k = 0; k < parameterCount; k++)
+                                    {
+                                        TM32ASM_DestroyTokenStream(parameters[k]);
+                                    }
+                                    free(parameters);
+                                    TM32ASM_DestroyTokenStream(outputStream);
+                                    return false;
+                                }
+                                tokenHandled = true;
+                            }
+                            
+                            if (!tokenHandled)
+                            {
+                                // Copy body token as-is
+                                TM32ASM_Token* copiedToken = TM32ASM_CopyToken(bodyToken);
+                                if (copiedToken == NULL)
+                                {
+                                    for (size_t k = 0; k < parameterCount; k++)
+                                    {
+                                        TM32ASM_DestroyTokenStream(parameters[k]);
+                                    }
+                                    free(parameters);
+                                    TM32ASM_DestroyTokenStream(outputStream);
+                                    return false;
+                                }
+                                if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+                                {
+                                    TM32ASM_DestroyToken(copiedToken);
+                                    for (size_t k = 0; k < parameterCount; k++)
+                                    {
+                                        TM32ASM_DestroyTokenStream(parameters[k]);
+                                    }
+                                    free(parameters);
+                                    TM32ASM_DestroyTokenStream(outputStream);
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Macro body is NULL!");
+                    }
+                }
+                
+                // Clean up parameters
+                for (size_t j = 0; j < parameterCount; j++)
+                {
+                    TM32ASM_DestroyTokenStream(parameters[j]);
+                }
+                free(parameters);
+                
+                continue;
+            }
+            else if (macroSymbol != NULL && macroSymbol->type == TM32ASM_ST_MACRO_SIMPLE)
+            {
+                if (preprocessor->verbose)
+                {
+                    TM32ASM_LogInfo("Found simple macro '%s', expanding...", token->lexeme);
+                }
+                
+                expansionOccurred = true; // Mark that an expansion occurred
+                // Simple text substitution macro
+                skipToken = true;
+                
+                // Determine the appropriate token type based on the stored value
+                TM32ASM_TokenType tokenType = TM32ASM_TT_IDENTIFIER;
+                const char* valueToUse = macroSymbol->value;
+                
+                if (valueToUse != NULL && strlen(valueToUse) >= 2 && 
+                    valueToUse[0] == '"' && valueToUse[strlen(valueToUse) - 1] == '"')
+                {
+                    // String literal - keep as string token
+                    tokenType = TM32ASM_TT_STRING;
+                }
+                else if (valueToUse != NULL && strlen(valueToUse) >= 3 &&
+                         valueToUse[0] == '\'' && valueToUse[strlen(valueToUse) - 1] == '\'')
+                {
+                    // Character literal
+                    tokenType = TM32ASM_TT_CHARACTER;
+                }
+                else if (valueToUse != NULL && 
+                         ((isdigit(valueToUse[0])) ||
+                          (valueToUse[0] == '-' && isdigit(valueToUse[1])) ||
+                          (valueToUse[0] == '0' && valueToUse[1] == 'x')))
+                {
+                    // Numeric literal (decimal or hexadecimal)
+                    if (valueToUse[0] == '0' && valueToUse[1] == 'x')
+                    {
+                        tokenType = TM32ASM_TT_HEXADECIMAL;
+                    }
+                    else
+                    {
+                        tokenType = TM32ASM_TT_DECIMAL;
+                    }
+                }
+                // else it's an identifier (default)
+                
+                TM32ASM_Token* valueToken = TM32ASM_CreateToken(valueToUse, tokenType);
+                if (valueToken == NULL)
+                {
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                valueToken->filename = token->filename;
+                valueToken->line = token->line;
+                
+                if (TM32ASM_PushTokenBack(outputStream, valueToken) == NULL)
+                {
+                    TM32ASM_DestroyToken(valueToken);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                continue;
+            }
+        }
+        
+        // Copy non-macro tokens
+        if (!skipToken)
+        {
+            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+            if (copiedToken == NULL)
+            {
+                TM32ASM_LogError("Could not copy token during macro expansion pass");
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+            {
+                TM32ASM_LogError("Could not add token to output stream during macro expansion pass");
+                TM32ASM_DestroyToken(copiedToken);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
         }
     }
     
-    // Set the output token stream
+        // Prepare for next iteration if needed
+        if (expansionOccurred && iterationCount < maxIterations)
+        {
+            // Clean up previous iteration's input (except the original)
+            if (finalOutput != NULL && finalOutput != preprocessor->inputTokenStream)
+            {
+                TM32ASM_DestroyTokenStream(finalOutput);
+            }
+            finalOutput = outputStream;
+            workingInput = outputStream;
+        }
+        else
+        {
+            // This is the final iteration
+            finalOutput = outputStream;
+        }
+    }
+    
+    // Check for too many iterations (possible infinite recursion)
+    if (iterationCount >= maxIterations)
+    {
+        TM32ASM_LogWarn("Macro expansion stopped after %d iterations - possible infinite recursion", maxIterations);
+    }
+    
+    // Set the final output token stream
     if (preprocessor->outputTokenStream != NULL)
     {
         TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
     }
-    preprocessor->outputTokenStream = outputStream;
+    preprocessor->outputTokenStream = finalOutput;
     
     if (preprocessor->verbose)
     {
-        TM32ASM_LogInfo("Macro expansion pass completed (pass-through mode)");
+        TM32ASM_LogInfo("Macro expansion pass completed");
     }
     
     return true;

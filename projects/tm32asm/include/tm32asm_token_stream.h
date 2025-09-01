@@ -56,6 +56,18 @@ void TM32ASM_DestroyTokenStream (
 );
 
 /**
+ * @brief   Creates a copy of an existing token stream.
+ * 
+ * @param   stream  A pointer to the token stream to copy.
+ * 
+ * @return  A pointer to the newly created copy if successful, or `NULL` if
+ *          an error occurred.
+ */
+TM32ASM_TokenStream* TM32ASM_CopyTokenStream (
+    const TM32ASM_TokenStream* stream
+);
+
+/**
  * @brief   Inserts a token into the token stream at the current write pointer.
  * 
  * @param   stream  A pointer to the token stream in which to insert the token.

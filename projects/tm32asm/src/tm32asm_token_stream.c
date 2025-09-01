@@ -212,6 +212,47 @@ void TM32ASM_DestroyTokenStream (
     }
 }
 
+TM32ASM_TokenStream* TM32ASM_CopyTokenStream (
+    const TM32ASM_TokenStream* stream
+)
+{
+    TM32ASM_ReturnValueIfNull(stream, NULL);
+    
+    // Create new token stream
+    TM32ASM_TokenStream* copy = TM32ASM_CreateTokenStream();
+    if (copy == NULL)
+    {
+        return NULL;
+    }
+    
+    // Reserve capacity to match original
+    if (!TM32ASM_ReserveTokens(copy, stream->tokenCount))
+    {
+        TM32ASM_DestroyTokenStream(copy);
+        return NULL;
+    }
+    
+    // Copy all tokens
+    for (size_t i = 0; i < stream->tokenCount; i++)
+    {
+        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(stream->tokens[i]);
+        if (copiedToken == NULL)
+        {
+            TM32ASM_DestroyTokenStream(copy);
+            return NULL;
+        }
+        
+        if (TM32ASM_PushTokenBack(copy, copiedToken) == NULL)
+        {
+            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyTokenStream(copy);
+            return NULL;
+        }
+    }
+    
+    return copy;
+}
+
 bool TM32ASM_ReserveTokens (
     TM32ASM_TokenStream*    stream,
     size_t                  capacity
