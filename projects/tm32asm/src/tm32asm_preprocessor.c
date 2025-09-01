@@ -167,6 +167,18 @@ static bool TM32ASM_PassControlFlow (
 );
 
 /**
+ * @brief   Performs the debug information processing pass, responsible for
+ *          debug output, assertions, and other debug-related tasks.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ *
+ * @return  `true` if the pass was successful; `false` otherwise.
+ */
+static bool TM32ASM_PassDebugProcessing (
+    TM32ASM_Preprocessor* preprocessor
+);
+
+/**
  * @brief   Performs the final token stream generation pass.
  *
  * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
@@ -450,6 +462,81 @@ static bool TM32ASM_ProcessBreakDirective (
  * @return  `true` if processing was successful; `false` otherwise.
  */
 static bool TM32ASM_ProcessContinueDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+);
+
+/**
+ * @brief   Processes a .warn directive to emit a warning message.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   token           The .warn directive token.
+ * @param   tokenIndex      Current position in the token stream.
+ *
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessWarnDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+);
+
+/**
+ * @brief   Processes a .error directive to emit an error message and halt assembly.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   token           The .error directive token.
+ * @param   tokenIndex      Current position in the token stream.
+ *
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessErrorDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+);
+
+/**
+ * @brief   Processes a .assert directive to evaluate a condition and emit an error if false.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   token           The .assert directive token.
+ * @param   tokenIndex      Current position in the token stream.
+ *
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessAssertDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+);
+
+/**
+ * @brief   Processes a .file directive to set the current filename for error reporting.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   token           The .file directive token.
+ * @param   tokenIndex      Current position in the token stream.
+ *
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessFileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+);
+
+/**
+ * @brief   Processes a .line directive to set the current line number for error reporting.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   token           The .line directive token.
+ * @param   tokenIndex      Current position in the token stream.
+ *
+ * @return  `true` if processing was successful; `false` otherwise.
+ */
+static bool TM32ASM_ProcessLineDirective (
     TM32ASM_Preprocessor*   preprocessor,
     TM32ASM_Token*          token,
     size_t*                 tokenIndex
@@ -3666,6 +3753,123 @@ static bool TM32ASM_PassControlFlow (
     return true;
 }
 
+static bool TM32ASM_PassDebugProcessing (
+    TM32ASM_Preprocessor* preprocessor
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Starting debug processing and printing pass");
+    }
+    
+    // Create output token stream
+    TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
+    if (outputStream == NULL)
+    {
+        TM32ASM_LogError("Could not create output token stream for debug processing pass");
+        return false;
+    }
+    
+    // Process all tokens in the input stream
+    for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
+        bool shouldEmitToken = true;
+        bool skipToken = false;
+        
+        // Check for debug directives
+        if (token->type == TM32ASM_TT_DIRECTIVE)
+        {
+            if (token->param == TM32ASM_DT_WARN)
+            {
+                if (!TM32ASM_ProcessWarnDirective(preprocessor, token, &i))
+                {
+                    TM32ASM_LogError("Failed to process .warn directive at line %u", token->line);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                skipToken = true; // Don't emit the .warn token itself
+            }
+            else if (token->param == TM32ASM_DT_ERROR)
+            {
+                if (!TM32ASM_ProcessErrorDirective(preprocessor, token, &i))
+                {
+                    TM32ASM_LogError("Failed to process .error directive at line %u", token->line);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                skipToken = true; // Don't emit the .error token itself
+            }
+            else if (token->param == TM32ASM_DT_ASSERT)
+            {
+                if (!TM32ASM_ProcessAssertDirective(preprocessor, token, &i))
+                {
+                    TM32ASM_LogError("Failed to process .assert directive at line %u", token->line);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                skipToken = true; // Don't emit the .assert token itself
+            }
+            else if (token->param == TM32ASM_DT_FILE)
+            {
+                if (!TM32ASM_ProcessFileDirective(preprocessor, token, &i))
+                {
+                    TM32ASM_LogError("Failed to process .file directive at line %u", token->line);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                skipToken = true; // Don't emit the .file token itself
+            }
+            else if (token->param == TM32ASM_DT_LINE)
+            {
+                if (!TM32ASM_ProcessLineDirective(preprocessor, token, &i))
+                {
+                    TM32ASM_LogError("Failed to process .line directive at line %u", token->line);
+                    TM32ASM_DestroyTokenStream(outputStream);
+                    return false;
+                }
+                skipToken = true; // Don't emit the .line token itself
+            }
+        }
+        
+        // Emit the token if it should be included
+        if (shouldEmitToken && !skipToken)
+        {
+            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
+            if (copiedToken == NULL)
+            {
+                TM32ASM_LogError("Could not copy token during debug processing pass");
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+            
+            if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+            {
+                TM32ASM_LogError("Could not add token to output stream during debug processing pass");
+                TM32ASM_DestroyToken(copiedToken);
+                TM32ASM_DestroyTokenStream(outputStream);
+                return false;
+            }
+        }
+    }
+    
+    // Set the output token stream
+    if (preprocessor->outputTokenStream != NULL)
+    {
+        TM32ASM_DestroyTokenStream(preprocessor->outputTokenStream);
+    }
+    preprocessor->outputTokenStream = outputStream;
+    
+    if (preprocessor->verbose)
+    {
+        TM32ASM_LogInfo("Debug processing pass completed with %zu tokens", outputStream->tokenCount);
+    }
+    
+    return true;
+}
+
 static bool TM32ASM_PassFinalization (
     TM32ASM_Preprocessor* preprocessor
 )
@@ -4039,6 +4243,7 @@ bool TM32ASM_ProcessTokenStream (
         { TM32ASM_PP_MACRO_EXPANSION,        TM32ASM_PassMacroExpansion,        "Macro Expansion" },
         { TM32ASM_PP_VARIABLE_EVALUATION,    TM32ASM_PassVariableEvaluation,    "Variable Evaluation" },
         { TM32ASM_PP_CONTROL_FLOW,           TM32ASM_PassControlFlow,           "Control Flow Processing" },
+        { TM32ASM_PP_DEBUG_PROCESSING,       TM32ASM_PassDebugProcessing,       "Debug Processing and Printing" },
         { TM32ASM_PP_FINALIZATION,           TM32ASM_PassFinalization,          "Finalization" },
         { TM32ASM_PP_NEWLINE_OPTIMIZATION,   TM32ASM_PassNewlineOptimization,   "Newline Optimization" }
     };
@@ -5574,12 +5779,385 @@ static bool TM32ASM_ProcessContinueDirective (
     return false;
 }
 
+/* Debug Directive Processing Functions *************************************/
+
+/**
+ * @brief   Processes a .warn directive to emit a warning message.
+ * 
+ * @param   preprocessor    The preprocessor context.
+ * @param   token           The warn directive token.
+ * @param   tokenIndex      Current token index.
+ * 
+ * @return  true on success, false on failure.
+ */
+static bool TM32ASM_ProcessWarnDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    TM32ASM_ReturnValueIfNull(tokenIndex, false);
+    
+    // Get the token stream for processing
+    TM32ASM_TokenStream* tokenStream = preprocessor->inputTokenStream;
+    if (tokenStream == NULL)
+    {
+        TM32ASM_LogError("Internal error: No token stream available for .warn directive at line %u", token->line);
+        return false;
+    }
+    
+    // Move to the next token after .warn
+    (*tokenIndex)++;
+    
+    // Check if we have a string literal for the warning message
+    if (*tokenIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError(".warn directive at line %u is missing a warning message", token->line);
+        return false;
+    }
+    
+    TM32ASM_Token* messageToken = tokenStream->tokens[*tokenIndex];
+    if (messageToken->type != TM32ASM_TT_STRING)
+    {
+        TM32ASM_LogError(".warn directive at line %u requires a string literal message", token->line);
+        return false;
+    }
+    
+    // Emit the warning message
+    TM32ASM_LogWarn("Warning at line %u: %s", token->line, messageToken->lexeme);
+    
+    return true;
+}
+
+/**
+ * @brief   Processes a .error directive to emit an error message and halt assembly.
+ * 
+ * @param   preprocessor    The preprocessor context.
+ * @param   token           The error directive token.
+ * @param   tokenIndex      Current token index.
+ * 
+ * @return  true on success, false on failure.
+ */
+static bool TM32ASM_ProcessErrorDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    TM32ASM_ReturnValueIfNull(tokenIndex, false);
+    
+    // Get the token stream for processing
+    TM32ASM_TokenStream* tokenStream = preprocessor->inputTokenStream;
+    if (tokenStream == NULL)
+    {
+        TM32ASM_LogError("Internal error: No token stream available for .error directive at line %u", token->line);
+        return false;
+    }
+    
+    // Move to the next token after .error
+    (*tokenIndex)++;
+    
+    // Check if we have a string literal for the error message
+    if (*tokenIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError(".error directive at line %u is missing an error message", token->line);
+        return false;
+    }
+    
+    TM32ASM_Token* messageToken = tokenStream->tokens[*tokenIndex];
+    if (messageToken->type != TM32ASM_TT_STRING)
+    {
+        TM32ASM_LogError(".error directive at line %u requires a string literal message", token->line);
+        return false;
+    }
+    
+    // Emit the error message and mark as failed
+    TM32ASM_LogError("Error at line %u: %s", token->line, messageToken->lexeme);
+    preprocessor->errorOccurred = true;
+    
+    return false; // Return false to indicate processing should stop
+}
+
+/**
+ * @brief   Processes a .assert directive to evaluate a condition and emit an error if false.
+ * 
+ * @param   preprocessor    The preprocessor context.
+ * @param   token           The assert directive token.
+ * @param   tokenIndex      Current token index.
+ * 
+ * @return  true on success, false on failure.
+ */
+static bool TM32ASM_ProcessAssertDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    TM32ASM_ReturnValueIfNull(tokenIndex, false);
+    
+    // Get the token stream for processing
+    TM32ASM_TokenStream* tokenStream = preprocessor->inputTokenStream;
+    if (tokenStream == NULL)
+    {
+        TM32ASM_LogError("Internal error: No token stream available for .assert directive at line %u", token->line);
+        return false;
+    }
+    
+    // Move to the next token after .assert
+    (*tokenIndex)++;
+    
+    // Find the end of the condition expression (before optional message)
+    size_t conditionStart = *tokenIndex;
+    size_t conditionEnd = *tokenIndex;
+    size_t messageStart = tokenStream->tokenCount; // Default to no message
+    
+    // Look for a comma to separate condition from optional message
+    for (size_t i = conditionStart; i < tokenStream->tokenCount; i++)
+    {
+        if (tokenStream->tokens[i]->type == TM32ASM_TT_NEWLINE)
+        {
+            conditionEnd = i;
+            break;
+        }
+        else if (tokenStream->tokens[i]->type == TM32ASM_TT_COMMA)
+        {
+            conditionEnd = i;
+            messageStart = i + 1;
+            // Find the end of the message (newline)
+            for (size_t j = messageStart; j < tokenStream->tokenCount; j++)
+            {
+                if (tokenStream->tokens[j]->type == TM32ASM_TT_NEWLINE)
+                {
+                    break;
+                }
+            }
+            break;
+        }
+    }
+    
+    if (conditionStart >= conditionEnd)
+    {
+        TM32ASM_LogError(".assert directive at line %u is missing a condition expression", token->line);
+        return false;
+    }
+    
+    // Evaluate the condition expression
+    int64_t conditionResult = 0;
+    if (!TM32ASM_EvaluateExpression(preprocessor, tokenStream, conditionStart, conditionEnd, &conditionResult))
+    {
+        TM32ASM_LogError("Failed to evaluate condition in .assert directive at line %u", token->line);
+        return false;
+    }
+    
+    // If condition is false, emit an error
+    if (conditionResult == 0)
+    {
+        if (messageStart < tokenStream->tokenCount && 
+            tokenStream->tokens[messageStart]->type == TM32ASM_TT_STRING)
+        {
+            // Use custom message
+            TM32ASM_LogError("Assertion failed at line %u: %s", token->line, tokenStream->tokens[messageStart]->lexeme);
+        }
+        else
+        {
+            // Use default message
+            TM32ASM_LogError("Assertion failed at line %u", token->line);
+        }
+        
+        preprocessor->errorOccurred = true;
+        return false;
+    }
+    
+    // Move token index to the end of the processed tokens
+    *tokenIndex = conditionEnd;
+    if (messageStart < tokenStream->tokenCount)
+    {
+        // Skip past the message if present
+        for (size_t i = messageStart; i < tokenStream->tokenCount; i++)
+        {
+            if (tokenStream->tokens[i]->type == TM32ASM_TT_NEWLINE)
+            {
+                *tokenIndex = i;
+                break;
+            }
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Processes a .file directive to set the current source file name.
+ * 
+ * @param   preprocessor    The preprocessor context.
+ * @param   token           The file directive token.
+ * @param   tokenIndex      Current token index.
+ * 
+ * @return  true on success, false on failure.
+ */
+static bool TM32ASM_ProcessFileDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    TM32ASM_ReturnValueIfNull(tokenIndex, false);
+    
+    // Get the token stream for processing
+    TM32ASM_TokenStream* tokenStream = preprocessor->inputTokenStream;
+    if (tokenStream == NULL)
+    {
+        TM32ASM_LogError("Internal error: No token stream available for .file directive at line %u", token->line);
+        return false;
+    }
+    
+    // Move to the next token after .file
+    (*tokenIndex)++;
+    
+    // Check if we have a string literal for the filename
+    if (*tokenIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError(".file directive at line %u is missing a filename", token->line);
+        return false;
+    }
+    
+    TM32ASM_Token* filenameToken = tokenStream->tokens[*tokenIndex];
+    if (filenameToken->type != TM32ASM_TT_STRING)
+    {
+        TM32ASM_LogError(".file directive at line %u requires a string literal filename", token->line);
+        return false;
+    }
+    
+    // Update all subsequent tokens' filename until the next .file directive
+    const char* newFilename = filenameToken->lexeme;
+    for (size_t i = *tokenIndex + 1; i < tokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* currentToken = tokenStream->tokens[i];
+        
+        // Stop if we encounter another .file directive
+        if (currentToken->type == TM32ASM_TT_DIRECTIVE && 
+            currentToken->param == TM32ASM_DT_FILE)
+        {
+            break;
+        }
+        
+        // Update the filename (note: this modifies the token's filename reference)
+        // In a full implementation, you might want to manage filename strings more carefully
+        currentToken->filename = newFilename;
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Processes a .line directive to set the current line number.
+ * 
+ * @param   preprocessor    The preprocessor context.
+ * @param   token           The line directive token.
+ * @param   tokenIndex      Current token index.
+ * 
+ * @return  true on success, false on failure.
+ */
+static bool TM32ASM_ProcessLineDirective (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_Token*          token,
+    size_t*                 tokenIndex
+)
+{
+    TM32ASM_TokenStream* tokenStream;
+    TM32ASM_Token* lineToken;
+    char* endPtr;
+    long newLineNumber;
+    uint32_t lineOffset;
+    uint32_t currentLine;
+    size_t i;
+    
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(token, false);
+    TM32ASM_ReturnValueIfNull(tokenIndex, false);
+    
+    // Get the token stream for processing
+    tokenStream = preprocessor->inputTokenStream;
+    if (tokenStream == NULL)
+    {
+        TM32ASM_LogError("Internal error: No token stream available for .line directive at line %u", token->line);
+        return false;
+    }
+    
+    // Move to the next token after .line
+    (*tokenIndex)++;
+    
+    // Check if we have a number for the line number
+    if (*tokenIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError(".line directive at line %u is missing a line number", token->line);
+        return false;
+    }
+    
+    lineToken = tokenStream->tokens[*tokenIndex];
+    if (lineToken->type != TM32ASM_TT_DECIMAL)
+    {
+        TM32ASM_LogError(".line directive at line %u requires a numeric line number", token->line);
+        return false;
+    }
+    
+    // Parse the line number
+    newLineNumber = strtol(lineToken->lexeme, &endPtr, 10);
+    if (*endPtr != '\0' || newLineNumber < 1)
+    {
+        TM32ASM_LogError(".line directive at line %u has invalid line number '%s'", token->line, lineToken->lexeme);
+        return false;
+    }
+    
+    // Update subsequent tokens' line numbers
+    lineOffset = (uint32_t)newLineNumber;
+    currentLine = token->line;
+    
+    for (i = *tokenIndex + 1; i < tokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* currentToken = tokenStream->tokens[i];
+        uint32_t originalOffset;
+        
+        // Stop if we encounter another .line directive
+        if (currentToken->type == TM32ASM_TT_DIRECTIVE && 
+            currentToken->param == TM32ASM_DT_LINE)
+        {
+            break;
+        }
+        
+        // Calculate the offset from the original line and apply to new base
+        originalOffset = currentToken->line - currentLine;
+        currentToken->line = lineOffset + originalOffset;
+    }
+    
+    return true;
+}
+
 /* Expression Evaluation Functions *******************************************/
 
 /**
  * @brief   Forward declaration for recursive expression parsing.
  */
 static bool TM32ASM_ParseExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+);
+
+/**
+ * @brief   Forward declaration for bitwise OR parsing.
+ */
+static bool TM32ASM_ParseBitwiseOr (
     TM32ASM_Preprocessor*   preprocessor,
     TM32ASM_TokenStream*    tokenStream,
     size_t*                 currentIndex,
@@ -5741,6 +6319,68 @@ static bool TM32ASM_ParsePrimary (
 }
 
 /**
+ * @brief   Parses unary operators (!, ~, and unary + and -).
+ */
+static bool TM32ASM_ParseUnary (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (*currentIndex >= endIndex || *currentIndex >= tokenStream->tokenCount)
+    {
+        return false;
+    }
+    
+    TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+    
+    // Check for unary operators
+    if (token->type == TM32ASM_TT_LOGICAL_NOT)
+    {
+        (*currentIndex)++;
+        if (!TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, result))
+        {
+            return false;
+        }
+        *result = (*result == 0) ? 1 : 0;  // Logical NOT
+        return true;
+    }
+    else if (token->type == TM32ASM_TT_BITWISE_NOT)
+    {
+        (*currentIndex)++;
+        if (!TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, result))
+        {
+            return false;
+        }
+        *result = ~(*result);  // Bitwise NOT
+        return true;
+    }
+    else if (token->type == TM32ASM_TT_PLUS)
+    {
+        (*currentIndex)++;
+        // Unary plus - no operation needed
+        return TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, result);
+    }
+    else if (token->type == TM32ASM_TT_MINUS)
+    {
+        (*currentIndex)++;
+        if (!TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, result))
+        {
+            return false;
+        }
+        *result = -(*result);  // Unary minus
+        return true;
+    }
+    else
+    {
+        // No unary operator, parse primary expression
+        return TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, result);
+    }
+}
+
+/**
  * @brief   Parses exponentiation (highest precedence binary operator).
  */
 static bool TM32ASM_ParseExponentiation (
@@ -5751,7 +6391,7 @@ static bool TM32ASM_ParseExponentiation (
     int64_t*                result
 )
 {
-    if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, result))
+    if (!TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, result))
     {
         return false;
     }
@@ -5763,7 +6403,7 @@ static bool TM32ASM_ParseExponentiation (
         {
             (*currentIndex)++;
             int64_t right;
-            if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            if (!TM32ASM_ParseUnary(preprocessor, tokenStream, currentIndex, endIndex, &right))
             {
                 return false;
             }
@@ -5949,6 +6589,117 @@ static bool TM32ASM_ParseShift (
 }
 
 /**
+ * @brief   Parses relational comparison operators (<, <=, >, >=).
+ */
+static bool TM32ASM_ParseRelational (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseBitwiseOr(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        TM32ASM_TokenType op = token->type;
+        
+        if (op == TM32ASM_TT_COMPARE_LESS || op == TM32ASM_TT_COMPARE_LESS_EQUAL ||
+            op == TM32ASM_TT_COMPARE_GREATER || op == TM32ASM_TT_COMPARE_GREATER_EQUAL)
+        {
+            (*currentIndex)++;
+            
+            int64_t right;
+            if (!TM32ASM_ParseBitwiseOr(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            switch (op)
+            {
+                case TM32ASM_TT_COMPARE_LESS:
+                    *result = (*result < right) ? 1 : 0;
+                    break;
+                case TM32ASM_TT_COMPARE_LESS_EQUAL:
+                    *result = (*result <= right) ? 1 : 0;
+                    break;
+                case TM32ASM_TT_COMPARE_GREATER:
+                    *result = (*result > right) ? 1 : 0;
+                    break;
+                case TM32ASM_TT_COMPARE_GREATER_EQUAL:
+                    *result = (*result >= right) ? 1 : 0;
+                    break;
+                default:
+                    break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses equality comparison operators (==, !=).
+ */
+static bool TM32ASM_ParseEquality (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseRelational(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        TM32ASM_TokenType op = token->type;
+        
+        if (op == TM32ASM_TT_COMPARE_EQUAL || op == TM32ASM_TT_COMPARE_NOT_EQUAL)
+        {
+            (*currentIndex)++;
+            
+            int64_t right;
+            if (!TM32ASM_ParseRelational(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            switch (op)
+            {
+                case TM32ASM_TT_COMPARE_EQUAL:
+                    *result = (*result == right) ? 1 : 0;
+                    break;
+                case TM32ASM_TT_COMPARE_NOT_EQUAL:
+                    *result = (*result != right) ? 1 : 0;
+                    break;
+                default:
+                    break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
  * @brief   Parses bitwise AND.
  */
 static bool TM32ASM_ParseBitwiseAnd (
@@ -6063,6 +6814,137 @@ static bool TM32ASM_ParseBitwiseOr (
 }
 
 /**
+ * @brief   Parses logical AND operators (level 11).
+ */
+static bool TM32ASM_ParseLogicalAnd (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseEquality(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_LOGICAL_AND)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseEquality(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            *result = (*result != 0 && right != 0) ? 1 : 0;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses logical OR operators (level 12).
+ */
+static bool TM32ASM_ParseLogicalOr (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseLogicalAnd(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_LOGICAL_OR)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseLogicalAnd(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            *result = (*result != 0 || right != 0) ? 1 : 0;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses ternary operators (level 13 - lowest precedence).
+ */
+static bool TM32ASM_ParseTernary (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseLogicalOr(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    if (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_QUESTION)
+        {
+            (*currentIndex)++;
+            int64_t trueValue;
+            if (!TM32ASM_ParseTernary(preprocessor, tokenStream, currentIndex, endIndex, &trueValue))
+            {
+                return false;
+            }
+            
+            if (*currentIndex >= endIndex || *currentIndex >= tokenStream->tokenCount)
+            {
+                TM32ASM_LogError("Expected ':' in ternary expression");
+                return false;
+            }
+            
+            token = tokenStream->tokens[*currentIndex];
+            if (token->type != TM32ASM_TT_COLON)
+            {
+                TM32ASM_LogError("Expected ':' in ternary expression");
+                return false;
+            }
+            
+            (*currentIndex)++;
+            int64_t falseValue;
+            if (!TM32ASM_ParseTernary(preprocessor, tokenStream, currentIndex, endIndex, &falseValue))
+            {
+                return false;
+            }
+            
+            *result = (*result != 0) ? trueValue : falseValue;
+        }
+    }
+    
+    return true;
+}
+
+/**
  * @brief   Parses a complete expression.
  */
 static bool TM32ASM_ParseExpression (
@@ -6073,7 +6955,7 @@ static bool TM32ASM_ParseExpression (
     int64_t*                result
 )
 {
-    return TM32ASM_ParseBitwiseOr(preprocessor, tokenStream, currentIndex, endIndex, result);
+    return TM32ASM_ParseTernary(preprocessor, tokenStream, currentIndex, endIndex, result);
 }
 
 static char* TM32ASM_DuplicateString (const char* str)

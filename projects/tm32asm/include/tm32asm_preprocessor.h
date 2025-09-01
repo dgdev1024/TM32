@@ -55,6 +55,7 @@ typedef enum
     TM32ASM_PP_MACRO_EXPANSION,         /** @brief Macro expansion pass */
     TM32ASM_PP_VARIABLE_EVALUATION,     /** @brief Variable and constant evaluation pass */
     TM32ASM_PP_CONTROL_FLOW,            /** @brief Control flow and loop processing pass */
+    TM32ASM_PP_DEBUG_PROCESSING,        /** @brief Debug processing and printing pass */
     TM32ASM_PP_FINALIZATION,            /** @brief Final token stream generation pass */
     TM32ASM_PP_NEWLINE_OPTIMIZATION,    /** @brief Newline optimization pass */
 } TM32ASM_PreprocessorPass;
