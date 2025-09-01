@@ -283,4 +283,23 @@ void TM32ASM_SetPreprocessorOptions (
     bool                    verbose
 );
 
+/**
+ * @brief   Evaluates an expression from a sequence of tokens.
+ *
+ * @param   preprocessor    A pointer to the TM32ASM_Preprocessor instance.
+ * @param   tokenStream     The token stream containing the expression.
+ * @param   startIndex      The starting index of the expression in the token stream.
+ * @param   endIndex        The ending index of the expression in the token stream (exclusive).
+ * @param   result          A pointer to store the evaluated result.
+ *
+ * @return  `true` if the expression was successfully evaluated; `false` otherwise.
+ */
+bool TM32ASM_EvaluateExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    int64_t*                result
+);
+
 #endif // TM32ASM_PREPROCESSOR_H

@@ -188,6 +188,17 @@ static bool TM32ASM_PassNewlineOptimization (
     TM32ASM_Preprocessor* preprocessor
 );
 
+/**
+ * @brief   Helper function to duplicate a string.
+ *
+ * @param   str     The string to duplicate.
+ *
+ * @return  A pointer to the duplicated string, or `NULL` on error.
+ */
+static char* TM32ASM_DuplicateString (
+    const char* str
+);
+
 /* Private Functions - Initialization and Cleanup ****************************/
 
 static bool TM32ASM_InitializePreprocessor (
@@ -1112,47 +1123,309 @@ static bool TM32ASM_PassSymbolDeclaration (
                     TM32ASM_Symbol* existingSymbol = TM32ASM_FindSymbol(preprocessor, nameToken->lexeme);
                     if (existingSymbol != NULL)
                     {
-                        TM32ASM_LogError("Symbol '%s' is already defined at line %u (redefinition at line %u)",
-                                       nameToken->lexeme, existingSymbol->line, nameToken->line);
-                        TM32ASM_DestroyTokenStream(outputStream);
-                        return false;
+                        // Variables can be reassigned, but constants and macros cannot
+                        if (existingSymbol->type == TM32ASM_ST_CONSTANT)
+                        {
+                            TM32ASM_LogError("Cannot reassign constant '%s' (defined at line %u) at line %u",
+                                           nameToken->lexeme, existingSymbol->line, nameToken->line);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        else if (existingSymbol->type == TM32ASM_ST_MACRO_SIMPLE || existingSymbol->type == TM32ASM_ST_MACRO_PARAMETRIC)
+                        {
+                            TM32ASM_LogError("Cannot reassign macro '%s' (defined at line %u) at line %u",
+                                           nameToken->lexeme, existingSymbol->line, nameToken->line);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        // Variables (TM32ASM_ST_VARIABLE) can be reassigned - continue with processing
                     }
                     
-                    // Check for optional assignment operator
+                    // Check for assignment operator (regular or compound)
                     TM32ASM_Token* nextToken = TM32ASM_PeekNextToken(preprocessor->inputTokenStream, 0);
                     char* initialValue = NULL;
+                    TM32ASM_TokenType assignmentOp = TM32ASM_TT_UNKNOWN;
                     
-                    if (nextToken != NULL && nextToken->type == TM32ASM_TT_ASSIGN_EQUAL)
+                    if (nextToken != NULL && 
+                        (nextToken->type == TM32ASM_TT_ASSIGN_EQUAL ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_PLUS ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_MINUS ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_TIMES ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_EXPONENT ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_DIVIDE ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_MODULO ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_BITWISE_AND ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_BITWISE_OR ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_BITWISE_XOR ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_LEFT_SHIFT ||
+                         nextToken->type == TM32ASM_TT_ASSIGN_RIGHT_SHIFT))
                     {
                         // Consume the assignment operator
+                        assignmentOp = nextToken->type;
                         TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
                         
-                        // The initialization expression will be evaluated in the variable evaluation pass
-                        // For now, just mark that it has an initialization value
-                        initialValue = "0";  // Default for later evaluation
+                        // For compound assignment operators, we need the current variable value
+                        int64_t currentValue = 0;
+                        bool hasCurrentValue = false;
+                        
+                        if (assignmentOp != TM32ASM_TT_ASSIGN_EQUAL && existingSymbol != NULL && existingSymbol->value != NULL)
+                        {
+                            currentValue = strtoll(existingSymbol->value, NULL, 0);
+                            hasCurrentValue = true;
+                        }
+                        
+                        // Collect expression tokens until end of line or statement
+                        TM32ASM_TokenStream* expressionTokens = TM32ASM_CreateTokenStream();
+                        if (expressionTokens == NULL)
+                        {
+                            TM32ASM_LogError("Could not create expression token stream for variable");
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        
+                        // Read tokens until end of line
+                        TM32ASM_Token* exprToken = NULL;
+                        while ((exprToken = TM32ASM_PeekNextToken(preprocessor->inputTokenStream, 0)) != NULL &&
+                               exprToken->type != TM32ASM_TT_NEWLINE &&
+                               exprToken->type != TM32ASM_TT_END_OF_FILE)
+                        {
+                            TM32ASM_Token* consumedToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                            TM32ASM_Token* copiedToken = TM32ASM_CopyToken(consumedToken);
+                            if (copiedToken == NULL || TM32ASM_PushTokenBack(expressionTokens, copiedToken) == NULL)
+                            {
+                                TM32ASM_LogError("Could not store expression token for variable");
+                                TM32ASM_DestroyTokenStream(expressionTokens);
+                                TM32ASM_DestroyTokenStream(outputStream);
+                                return false;
+                            }
+                        }
+                        
+                        // Try to evaluate the expression immediately
+                        if (expressionTokens->tokenCount > 0)
+                        {
+                            int64_t expressionResult;
+                            if (TM32ASM_EvaluateExpression(preprocessor, expressionTokens, 0, expressionTokens->tokenCount, &expressionResult))
+                            {
+                                // Successfully evaluated - now apply the operation
+                                int64_t finalResult;
+                                
+                                switch (assignmentOp)
+                                {
+                                    case TM32ASM_TT_ASSIGN_EQUAL:
+                                        finalResult = expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_PLUS:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use += on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue + expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_MINUS:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use -= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue - expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_TIMES:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use *= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue * expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_DIVIDE:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use /= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        if (expressionResult == 0)
+                                        {
+                                            TM32ASM_LogError("Division by zero in /= assignment for variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue / expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_MODULO:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use modulo assignment on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        if (expressionResult == 0)
+                                        {
+                                            TM32ASM_LogError("Modulo by zero in modulo assignment for variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue % expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_EXPONENT:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use **= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        if (expressionResult < 0)
+                                        {
+                                            TM32ASM_LogError("Negative exponents not supported in **= assignment");
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = 1;
+                                        for (int64_t i = 0; i < expressionResult; i++)
+                                        {
+                                            finalResult *= currentValue;
+                                        }
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_BITWISE_AND:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use &= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue & expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_BITWISE_OR:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use |= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue | expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_BITWISE_XOR:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use ^= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue ^ expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_LEFT_SHIFT:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use <<= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue << expressionResult;
+                                        break;
+                                    case TM32ASM_TT_ASSIGN_RIGHT_SHIFT:
+                                        if (!hasCurrentValue)
+                                        {
+                                            TM32ASM_LogError("Cannot use >>= on undefined variable '%s'", nameToken->lexeme);
+                                            TM32ASM_DestroyTokenStream(expressionTokens);
+                                            TM32ASM_DestroyTokenStream(outputStream);
+                                            return false;
+                                        }
+                                        finalResult = currentValue >> expressionResult;
+                                        break;
+                                    default:
+                                        TM32ASM_LogError("Unknown assignment operator for variable '%s'", nameToken->lexeme);
+                                        TM32ASM_DestroyTokenStream(expressionTokens);
+                                        TM32ASM_DestroyTokenStream(outputStream);
+                                        return false;
+                                }
+                                
+                                // Store the final result
+                                char resultBuffer[32];
+                                snprintf(resultBuffer, sizeof(resultBuffer), "%lld", (long long)finalResult);
+                                initialValue = TM32ASM_DuplicateString(resultBuffer);
+                                
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("Evaluated variable expression: %s = %lld", nameToken->lexeme, (long long)finalResult);
+                                }
+                            }
+                            else
+                            {
+                                // Could not evaluate now - will need forward reference resolution
+                                initialValue = "UNEVALUATED";
+                                
+                                if (preprocessor->verbose)
+                                {
+                                    TM32ASM_LogInfo("Variable expression requires forward reference resolution: %s", nameToken->lexeme);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            initialValue = "0";  // Empty expression defaults to 0
+                        }
+                        
+                        TM32ASM_DestroyTokenStream(expressionTokens);
                     }
                     
-                    // Create symbol entry for the variable
-                    TM32ASM_Symbol symbol = {0};
-                    symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
-                    symbol.type = TM32ASM_ST_VARIABLE;
-                    symbol.value = initialValue;  // Will be evaluated in variable evaluation pass
-                    symbol.parameters = NULL;
-                    symbol.parameterCount = 0;
-                    symbol.isDefined = true;
-                    symbol.line = nameToken->line;
-                    symbol.filename = nameToken->filename;
-                    
-                    if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                    // Create or update symbol entry for the variable
+                    if (existingSymbol != NULL && existingSymbol->type == TM32ASM_ST_VARIABLE)
                     {
-                        TM32ASM_LogError("Failed to add variable symbol '%s'", nameToken->lexeme);
-                        TM32ASM_DestroyTokenStream(outputStream);
-                        return false;
+                        // Update existing variable
+                        if (existingSymbol->value != NULL)
+                        {
+                            TM32ASM_Destroy(existingSymbol->value);
+                        }
+                        existingSymbol->value = initialValue;
+                        existingSymbol->line = nameToken->line;
+                        existingSymbol->filename = nameToken->filename;
+                        
+                        if (preprocessor->verbose)
+                        {
+                            TM32ASM_LogInfo("Updated variable: %s", nameToken->lexeme);
+                        }
                     }
-                    
-                    if (preprocessor->verbose)
+                    else
                     {
-                        TM32ASM_LogInfo("Recorded variable: %s", nameToken->lexeme);
+                        // Create new symbol entry for the variable
+                        TM32ASM_Symbol symbol = {0};
+                        symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
+                        symbol.type = TM32ASM_ST_VARIABLE;
+                        symbol.value = initialValue;
+                        symbol.parameters = NULL;
+                        symbol.parameterCount = 0;
+                        symbol.isDefined = true;
+                        symbol.line = nameToken->line;
+                        symbol.filename = nameToken->filename;
+                        
+                        if (!TM32ASM_AddSymbol(preprocessor, &symbol))
+                        {
+                            TM32ASM_LogError("Failed to add variable symbol '%s'", nameToken->lexeme);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                        
+                        if (preprocessor->verbose)
+                        {
+                            TM32ASM_LogInfo("Recorded variable: %s", nameToken->lexeme);
+                        }
                     }
                     skipToken = true; // Don't copy .let directive to output
                     break;
@@ -1168,7 +1441,14 @@ static bool TM32ASM_PassSymbolDeclaration (
                     
                     // Get the constant name (next token should be identifier)
                     TM32ASM_Token* nameToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
-                    if (nameToken == NULL || nameToken->type != TM32ASM_TT_IDENTIFIER)
+                    if (nameToken == NULL)
+                    {
+                        TM32ASM_LogError("No token found after .const directive at line %u", token->line);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    if (nameToken->type != TM32ASM_TT_IDENTIFIER)
                     {
                         TM32ASM_LogError("Expected identifier after .const directive at line %u", token->line);
                         TM32ASM_DestroyTokenStream(outputStream);
@@ -1194,14 +1474,75 @@ static bool TM32ASM_PassSymbolDeclaration (
                         return false;
                     }
                     
-                    // The initialization expression will be evaluated in the variable evaluation pass
-                    // For now, just record that it needs evaluation
+                    // Collect expression tokens until end of line or statement
+                    TM32ASM_TokenStream* expressionTokens = TM32ASM_CreateTokenStream();
+                    if (expressionTokens == NULL)
+                    {
+                        TM32ASM_LogError("Could not create expression token stream for constant");
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    // Read tokens until end of line
+                    TM32ASM_Token* exprToken = NULL;
+                    while ((exprToken = TM32ASM_PeekNextToken(preprocessor->inputTokenStream, 0)) != NULL &&
+                           exprToken->type != TM32ASM_TT_NEWLINE &&
+                           exprToken->type != TM32ASM_TT_END_OF_FILE)
+                    {
+                        TM32ASM_Token* consumedToken = TM32ASM_ConsumeNextToken(preprocessor->inputTokenStream);
+                        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(consumedToken);
+                        if (copiedToken == NULL || TM32ASM_PushTokenBack(expressionTokens, copiedToken) == NULL)
+                        {
+                            TM32ASM_LogError("Could not store expression token for constant");
+                            TM32ASM_DestroyTokenStream(expressionTokens);
+                            TM32ASM_DestroyTokenStream(outputStream);
+                            return false;
+                        }
+                    }
+                    
+                    // Try to evaluate the expression immediately
+                    char* constantValue = NULL;
+                    if (expressionTokens->tokenCount > 0)
+                    {
+                        int64_t result;
+                        if (TM32ASM_EvaluateExpression(preprocessor, expressionTokens, 0, expressionTokens->tokenCount, &result))
+                        {
+                            // Successfully evaluated - store the result
+                            char resultBuffer[32];
+                            snprintf(resultBuffer, sizeof(resultBuffer), "%lld", (long long)result);
+                            constantValue = TM32ASM_DuplicateString(resultBuffer);
+                            
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Evaluated constant expression: %s = %lld", nameToken->lexeme, (long long)result);
+                            }
+                        }
+                        else
+                        {
+                            // Could not evaluate now - will need forward reference resolution
+                            constantValue = "UNEVALUATED";
+                            
+                            if (preprocessor->verbose)
+                            {
+                                TM32ASM_LogInfo("Constant expression requires forward reference resolution: %s", nameToken->lexeme);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        TM32ASM_LogError("Expected expression after '=' in .const directive");
+                        TM32ASM_DestroyTokenStream(expressionTokens);
+                        TM32ASM_DestroyTokenStream(outputStream);
+                        return false;
+                    }
+                    
+                    TM32ASM_DestroyTokenStream(expressionTokens);
                     
                     // Create symbol entry for the constant
                     TM32ASM_Symbol symbol = {0};
                     symbol.name = nameToken->lexeme;  // Temporary assignment for AddSymbol
                     symbol.type = TM32ASM_ST_CONSTANT;
-                    symbol.value = NULL;  // Will be evaluated in variable evaluation pass
+                    symbol.value = constantValue;  // Will be evaluated in variable evaluation pass
                     symbol.parameters = NULL;
                     symbol.parameterCount = 0;
                     symbol.isDefined = true;
@@ -2744,10 +3085,7 @@ static bool TM32ASM_PassVariableEvaluation (
         TM32ASM_LogInfo("Starting variable and constant evaluation pass");
     }
     
-    // TODO: Implement variable and constant evaluation logic
-    // This will evaluate .let and .const expressions and substitute their values
-    
-    // For now, create a pass-through: copy input to output
+    // Create output token stream
     TM32ASM_TokenStream* outputStream = TM32ASM_CreateTokenStream();
     if (outputStream == NULL)
     {
@@ -2755,22 +3093,77 @@ static bool TM32ASM_PassVariableEvaluation (
         return false;
     }
     
-    // Copy all tokens from input to output
+    // Process all tokens from input to output, substituting constants and variables
     for (size_t i = 0; i < preprocessor->inputTokenStream->tokenCount; i++)
     {
         TM32ASM_Token* token = preprocessor->inputTokenStream->tokens[i];
-        TM32ASM_Token* copiedToken = TM32ASM_CopyToken(token);
-        if (copiedToken == NULL)
+        TM32ASM_Token* outputToken = NULL;
+        
+        // Check if this is an identifier that should be substituted
+        if (token->type == TM32ASM_TT_IDENTIFIER)
         {
-            TM32ASM_LogError("Could not copy token during variable evaluation pass");
+            // Look up the symbol
+            TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, token->lexeme);
+            if (symbol != NULL && (symbol->type == TM32ASM_ST_CONSTANT || symbol->type == TM32ASM_ST_VARIABLE))
+            {
+                // Substitute with the symbol's value
+                if (symbol->value != NULL && strcmp(symbol->value, "UNEVALUATED") != 0)
+                {
+                    // Parse the value as an integer and create a decimal token
+                    int64_t value = strtoll(symbol->value, NULL, 0);
+                    
+                    // Create a decimal token with the value
+                    char valueStr[32];
+                    snprintf(valueStr, sizeof(valueStr), "%lld", (long long)value);
+                    
+                    outputToken = TM32ASM_CreateToken(valueStr, TM32ASM_TT_DECIMAL);
+                    if (outputToken != NULL)
+                    {
+                        outputToken->filename = token->filename;
+                        outputToken->line = token->line;
+                        
+                        if (preprocessor->verbose)
+                        {
+                            TM32ASM_LogInfo("Substituted %s with value %lld at line %u", 
+                                          token->lexeme, (long long)value, token->line);
+                        }
+                    }
+                }
+                else
+                {
+                    // Symbol value not available or unevaluated - copy as is
+                    outputToken = TM32ASM_CopyToken(token);
+                    
+                    if (preprocessor->verbose)
+                    {
+                        TM32ASM_LogInfo("Symbol %s has no value or is unevaluated - copying as identifier", token->lexeme);
+                    }
+                }
+            }
+            else
+            {
+                // Not a constant or variable - copy as is
+                outputToken = TM32ASM_CopyToken(token);
+            }
+        }
+        else
+        {
+            // Not an identifier - copy as is
+            outputToken = TM32ASM_CopyToken(token);
+        }
+        
+        // Add the token to the output stream
+        if (outputToken == NULL)
+        {
+            TM32ASM_LogError("Could not create output token during variable evaluation pass");
             TM32ASM_DestroyTokenStream(outputStream);
             return false;
         }
         
-        if (TM32ASM_PushTokenBack(outputStream, copiedToken) == NULL)
+        if (TM32ASM_PushTokenBack(outputStream, outputToken) == NULL)
         {
             TM32ASM_LogError("Could not add token to output stream during variable evaluation pass");
-            TM32ASM_DestroyToken(copiedToken);
+            TM32ASM_DestroyToken(outputToken);
             TM32ASM_DestroyTokenStream(outputStream);
             return false;
         }
@@ -2785,7 +3178,7 @@ static bool TM32ASM_PassVariableEvaluation (
     
     if (preprocessor->verbose)
     {
-        TM32ASM_LogInfo("Variable evaluation pass completed (pass-through mode)");
+        TM32ASM_LogInfo("Variable evaluation pass completed with %zu tokens", outputStream->tokenCount);
     }
     
     return true;
@@ -3307,4 +3700,549 @@ void TM32ASM_SetPreprocessorOptions (
                             verbose ? "true" : "false");
         }
     }
+}
+
+/* Expression Evaluation Functions *******************************************/
+
+/**
+ * @brief   Forward declaration for recursive expression parsing.
+ */
+static bool TM32ASM_ParseExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+);
+
+/**
+ * @brief   Parses a primary expression (numbers, identifiers, parentheses).
+ */
+static bool TM32ASM_ParsePrimary (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (*currentIndex >= endIndex || *currentIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError("Unexpected end of expression");
+        return false;
+    }
+    
+    TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+    (*currentIndex)++;
+    
+    switch (token->type)
+    {
+        case TM32ASM_TT_DECIMAL:
+        case TM32ASM_TT_HEXADECIMAL:
+        case TM32ASM_TT_BINARY:
+        case TM32ASM_TT_OCTAL:
+            *result = (int64_t)TM32ASM_GetIntegerLexeme(token);
+            return true;
+            
+        case TM32ASM_TT_CHARACTER:
+        {
+            const char* lexeme = token->lexeme;
+            if (lexeme != NULL && strlen(lexeme) >= 3 && lexeme[0] == '\'' && lexeme[strlen(lexeme) - 1] == '\'')
+            {
+                if (lexeme[1] == '\\' && strlen(lexeme) == 4)
+                {
+                    // Escape sequences
+                    switch (lexeme[2])
+                    {
+                        case 'n': *result = '\n'; break;
+                        case 't': *result = '\t'; break;
+                        case 'r': *result = '\r'; break;
+                        case '0': *result = '\0'; break;
+                        case '\\': *result = '\\'; break;
+                        case '\'': *result = '\''; break;
+                        default: *result = lexeme[2]; break;
+                    }
+                }
+                else
+                {
+                    *result = lexeme[1];
+                }
+                return true;
+            }
+            TM32ASM_LogError("Invalid character literal");
+            return false;
+        }
+        
+        case TM32ASM_TT_IDENTIFIER:
+        {
+            // Look up symbol value
+            const char* lexeme = token->lexeme;
+            TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, lexeme);
+            if (symbol == NULL)
+            {
+                TM32ASM_LogError("Undefined symbol '%s' in expression", lexeme);
+                return false;
+            }
+            
+            if (symbol->type == TM32ASM_ST_CONSTANT || symbol->type == TM32ASM_ST_VARIABLE)
+            {
+                if (symbol->value != NULL)
+                {
+                    *result = strtoll(symbol->value, NULL, 0);
+                    return true;
+                }
+                else
+                {
+                    TM32ASM_LogError("Symbol '%s' has no value", lexeme);
+                    return false;
+                }
+            }
+            else
+            {
+                TM32ASM_LogError("Symbol '%s' is not a constant or variable", lexeme);
+                return false;
+            }
+        }
+        
+        case TM32ASM_TT_OPEN_PARENTHESIS:
+        {
+            // Parse parenthesized expression
+            int64_t subResult;
+            if (!TM32ASM_ParseExpression(preprocessor, tokenStream, currentIndex, endIndex, &subResult))
+            {
+                return false;
+            }
+            
+            // Expect closing parenthesis
+            if (*currentIndex >= endIndex || *currentIndex >= tokenStream->tokenCount)
+            {
+                TM32ASM_LogError("Expected ')' in expression");
+                return false;
+            }
+            
+            TM32ASM_Token* closeParen = tokenStream->tokens[*currentIndex];
+            if (closeParen->type != TM32ASM_TT_CLOSE_PARENTHESIS)
+            {
+                TM32ASM_LogError("Expected ')' in expression");
+                return false;
+            }
+            (*currentIndex)++;
+            
+            *result = subResult;
+            return true;
+        }
+        
+        case TM32ASM_TT_MINUS:
+        {
+            // Unary minus
+            int64_t operand;
+            if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, &operand))
+            {
+                return false;
+            }
+            *result = -operand;
+            return true;
+        }
+        
+        case TM32ASM_TT_PLUS:
+        {
+            // Unary plus
+            return TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, result);
+        }
+        
+        case TM32ASM_TT_BITWISE_NOT:
+        {
+            // Bitwise NOT
+            int64_t operand;
+            if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, &operand))
+            {
+                return false;
+            }
+            *result = ~operand;
+            return true;
+        }
+        
+        default:
+            TM32ASM_LogError("Unexpected token in expression");
+            return false;
+    }
+}
+
+/**
+ * @brief   Parses exponentiation (highest precedence binary operator).
+ */
+static bool TM32ASM_ParseExponentiation (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_EXPONENT)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            // Calculate power
+            if (right < 0)
+            {
+                TM32ASM_LogError("Negative exponents not supported");
+                return false;
+            }
+            
+            int64_t temp = 1;
+            for (int64_t i = 0; i < right; i++)
+            {
+                temp *= *result;
+            }
+            *result = temp;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses multiplication, division, and modulo.
+ */
+static bool TM32ASM_ParseMultiplicative (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseExponentiation(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_TIMES || token->type == TM32ASM_TT_DIVIDE || token->type == TM32ASM_TT_MODULO)
+        {
+            TM32ASM_TokenType op = token->type;
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseExponentiation(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            switch (op)
+            {
+                case TM32ASM_TT_TIMES:
+                    *result *= right;
+                    break;
+                case TM32ASM_TT_DIVIDE:
+                    if (right == 0)
+                    {
+                        TM32ASM_LogError("Division by zero in expression");
+                        return false;
+                    }
+                    *result /= right;
+                    break;
+                case TM32ASM_TT_MODULO:
+                    if (right == 0)
+                    {
+                        TM32ASM_LogError("Modulo by zero in expression");
+                        return false;
+                    }
+                    *result %= right;
+                    break;
+                default:
+                    break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses addition and subtraction.
+ */
+static bool TM32ASM_ParseAdditive (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseMultiplicative(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_PLUS || token->type == TM32ASM_TT_MINUS)
+        {
+            TM32ASM_TokenType op = token->type;
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseMultiplicative(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            if (op == TM32ASM_TT_PLUS)
+            {
+                *result += right;
+            }
+            else
+            {
+                *result -= right;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses shift operations.
+ */
+static bool TM32ASM_ParseShift (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseAdditive(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_LEFT_SHIFT || token->type == TM32ASM_TT_RIGHT_SHIFT)
+        {
+            TM32ASM_TokenType op = token->type;
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseAdditive(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            
+            if (op == TM32ASM_TT_LEFT_SHIFT)
+            {
+                *result <<= right;
+            }
+            else
+            {
+                *result >>= right;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses bitwise AND.
+ */
+static bool TM32ASM_ParseBitwiseAnd (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseShift(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_BITWISE_AND)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseShift(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            *result &= right;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses bitwise XOR.
+ */
+static bool TM32ASM_ParseBitwiseXor (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseBitwiseAnd(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_BITWISE_XOR)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseBitwiseAnd(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            *result ^= right;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses bitwise OR.
+ */
+static bool TM32ASM_ParseBitwiseOr (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    if (!TM32ASM_ParseBitwiseXor(preprocessor, tokenStream, currentIndex, endIndex, result))
+    {
+        return false;
+    }
+    
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        if (token->type == TM32ASM_TT_BITWISE_OR)
+        {
+            (*currentIndex)++;
+            int64_t right;
+            if (!TM32ASM_ParseBitwiseXor(preprocessor, tokenStream, currentIndex, endIndex, &right))
+            {
+                return false;
+            }
+            *result |= right;
+        }
+        else
+        {
+            break;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * @brief   Parses a complete expression.
+ */
+static bool TM32ASM_ParseExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    return TM32ASM_ParseBitwiseOr(preprocessor, tokenStream, currentIndex, endIndex, result);
+}
+
+static char* TM32ASM_DuplicateString (const char* str)
+{
+    if (str == NULL) return NULL;
+    
+    size_t len = strlen(str);
+    char* result = TM32ASM_Create(len + 1, char);
+    if (result != NULL)
+    {
+        strcpy(result, str);
+    }
+    return result;
+}
+
+bool TM32ASM_EvaluateExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t                  startIndex,
+    size_t                  endIndex,
+    int64_t*                result
+)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    TM32ASM_ReturnValueIfNull(tokenStream, false);
+    TM32ASM_ReturnValueIfNull(result, false);
+    
+    if (startIndex >= endIndex || startIndex >= tokenStream->tokenCount)
+    {
+        TM32ASM_LogError("Invalid expression range");
+        return false;
+    }
+    
+    size_t currentIndex = startIndex;
+    bool success = TM32ASM_ParseExpression(preprocessor, tokenStream, &currentIndex, endIndex, result);
+    
+    if (success && currentIndex != endIndex)
+    {
+        TM32ASM_LogError("Unexpected tokens at end of expression");
+        return false;
+    }
+    
+    return success;
 }
