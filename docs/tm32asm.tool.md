@@ -301,7 +301,14 @@ order of operations is as follows:
    - Handle `.break` and `.continue` directives within loops
    - Recursively apply steps 3-5 for code generated within constructs
 
-6. **Final Token Stream Generation**: After all preprocessing is complete,
+6. **Debug Processing and Printing**: Processes debug printing, assertions and
+  other debugging directives:
+   - Process `.warn` directives to emit warning messages
+   - Process `.error` and `.assert` directives to handle errors and assertions
+   - Process `.file` and `.line` directives to manage source file information
+      for error reporting and debugging
+
+7. **Final Token Stream Generation**: After all preprocessing is complete,
    output the final token stream containing no preprocessor directives or
    unresolved macros for parsing.
 
