@@ -78,6 +78,206 @@ static bool TM32ASM_PrintTokens (TM32ASM_TokenStream* tokenStream)
     return true;
 }
 
+static bool TM32ASM_WritePreprocessedSource (TM32ASM_TokenStream* tokenStream, const char* outputFile)
+{
+    TM32ASM_ReturnValueIfNull(tokenStream, false);
+    TM32ASM_ReturnValueIfNull(outputFile, false);
+    
+    FILE* file = fopen(outputFile, "w");
+    if (file == NULL)
+    {
+        TM32ASM_LogError("Failed to open output file '%s' for writing", outputFile);
+        return false;
+    }
+    
+    bool isFirstTokenOnLine = true;
+    
+    for (size_t i = 0; i < tokenStream->tokenCount; i++)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[i];
+        if (token == NULL)
+        {
+            continue;
+        }
+        
+        // Handle newlines and maintain line structure
+        if (token->type == TM32ASM_TT_NEWLINE)
+        {
+            fprintf(file, "\n");
+            isFirstTokenOnLine = true;
+            continue;
+        }
+        
+        // Skip end-of-file tokens
+        if (token->type == TM32ASM_TT_END_OF_FILE)
+        {
+            continue;
+        }
+        
+        // Add space before token if needed
+        if (!isFirstTokenOnLine)
+        {
+            // Determine if we need a space before this token
+            bool needSpace = true;
+            
+            // No space before certain punctuation
+            if (token->type == TM32ASM_TT_COMMA || 
+                token->type == TM32ASM_TT_COLON ||
+                token->type == TM32ASM_TT_CLOSE_PARENTHESIS ||
+                token->type == TM32ASM_TT_CLOSE_BRACKET ||
+                token->type == TM32ASM_TT_CLOSE_BRACE)
+            {
+                needSpace = false;
+            }
+            
+            // Check previous token to determine spacing
+            if (i > 0 && tokenStream->tokens[i-1] != NULL)
+            {
+                TM32ASM_TokenType prevType = tokenStream->tokens[i-1]->type;
+                
+                // No space after certain punctuation
+                if (prevType == TM32ASM_TT_OPEN_PARENTHESIS ||
+                    prevType == TM32ASM_TT_OPEN_BRACKET ||
+                    prevType == TM32ASM_TT_OPEN_BRACE)
+                {
+                    needSpace = false;
+                }
+            }
+            
+            if (needSpace)
+            {
+                fprintf(file, " ");
+            }
+        }
+        
+        // Write the token's lexeme or handle special cases
+        if (token->lexeme != NULL && strlen(token->lexeme) > 0)
+        {
+            fprintf(file, "%s", token->lexeme);
+        }
+        else if (token->type == 62) // TM32ASM_TT_COLON
+        {
+            // Handle colon tokens that may have empty lexeme
+            fprintf(file, ":");
+        }
+        else if (token->type == 61) // TM32ASM_TT_COMMA
+        {
+            // Handle comma tokens that may have empty lexeme
+            fprintf(file, ",");
+        }
+        else
+        {
+            // For debugging - skip tokens with no lexeme
+            continue;
+        }
+        
+        isFirstTokenOnLine = false;
+    }
+    
+    // Ensure file ends with a newline if it doesn't already
+    if (!isFirstTokenOnLine)
+    {
+        fprintf(file, "\n");
+    }
+    
+    fclose(file);
+    return true;
+}
+
+static bool TM32ASM_PrintPreprocessorVariables (TM32ASM_Preprocessor* preprocessor)
+{
+    TM32ASM_ReturnValueIfNull(preprocessor, false);
+    
+    printf("=== PREPROCESSOR VARIABLES ===\n");
+    
+    if (preprocessor->symbolCount == 0)
+    {
+        printf("No preprocessor symbols defined.\n");
+    }
+    else
+    {
+        printf("Total symbols: %zu\n\n", preprocessor->symbolCount);
+        
+        // Sort symbols by type for better organization
+        const char* typeNames[] = {
+            "Simple Macro",
+            "Parametric Macro", 
+            "Variable",
+            "Constant"
+        };
+        
+        for (int type = 0; type < 4; type++)
+        {
+            bool foundType = false;
+            
+            for (size_t i = 0; i < preprocessor->symbolCount; i++)
+            {
+                TM32ASM_Symbol* symbol = &preprocessor->symbols[i];
+                if (symbol != NULL && symbol->type == type && symbol->isDefined)
+                {
+                    if (!foundType)
+                    {
+                        printf("--- %s ---\n", typeNames[type]);
+                        foundType = true;
+                    }
+                    
+                    printf("Name: %s\n", symbol->name ? symbol->name : "(null)");
+                    
+                    if (symbol->type == TM32ASM_ST_MACRO_PARAMETRIC)
+                    {
+                        printf("  Parameters: ");
+                        if (symbol->parameterCount > 0 && symbol->parameters != NULL)
+                        {
+                            printf("(");
+                            for (size_t j = 0; j < symbol->parameterCount; j++)
+                            {
+                                printf("%s", symbol->parameters[j] ? symbol->parameters[j] : "(null)");
+                                if (j < symbol->parameterCount - 1)
+                                {
+                                    printf(", ");
+                                }
+                            }
+                            printf(")\n");
+                        }
+                        else
+                        {
+                            printf("(none)\n");
+                        }
+                        
+                        if (symbol->macroBody != NULL)
+                        {
+                            printf("  Body: %zu tokens\n", symbol->macroBody->tokenCount);
+                        }
+                        else
+                        {
+                            printf("  Body: (empty)\n");
+                        }
+                    }
+                    else
+                    {
+                        printf("  Value: %s\n", symbol->value ? symbol->value : "(null)");
+                    }
+                    
+                    if (symbol->filename)
+                    {
+                        printf("  Defined at: %s:%u\n", symbol->filename, symbol->line);
+                    }
+                    
+                    printf("\n");
+                }
+            }
+            
+            if (foundType)
+            {
+                printf("\n");
+            }
+        }
+    }
+    
+    printf("=== END PREPROCESSOR VARIABLES ===\n");
+    return true;
+}
+
 /* Private Functions **********************************************************/
 
 int main (int argc, const char** argv)
@@ -244,7 +444,30 @@ int main (int argc, const char** argv)
         TM32ASM_PrintTokens(preprocessedStream);
         printf("=== END PREPROCESSED TOKENS ===\n");
         
-        // TODO: Handle --output-preprocessed and --variables options
+        // Handle --output-preprocessed option
+        if (outputPreprocessedFile != NULL)
+        {
+            if (!TM32ASM_WritePreprocessedSource(preprocessedStream, outputPreprocessedFile))
+            {
+                TM32ASM_LogError("Failed to write preprocessed source to file '%s'", outputPreprocessedFile);
+                TM32ASM_DestroyLexer(lexer);
+                TM32ASM_DestroyPreprocessor(preprocessor);
+                return 1;
+            }
+            printf("Preprocessed source written to: %s\n", outputPreprocessedFile);
+        }
+        
+        // Handle --variables option
+        if (showVariables)
+        {
+            if (!TM32ASM_PrintPreprocessorVariables(preprocessor))
+            {
+                TM32ASM_LogError("Failed to print preprocessor variables");
+                TM32ASM_DestroyLexer(lexer);
+                TM32ASM_DestroyPreprocessor(preprocessor);
+                return 1;
+            }
+        }
         
         TM32ASM_DestroyLexer(lexer);
         TM32ASM_DestroyPreprocessor(preprocessor);

@@ -11,6 +11,7 @@
 
 #include <tm32asm_preprocessor.h>
 #include <ctype.h>
+#include <math.h>
 
 /* Private Constants **********************************************************/
 
@@ -1729,7 +1730,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                             else
                             {
                                 // Could not evaluate now - will need forward reference resolution
-                                initialValue = "UNEVALUATED";
+                                initialValue = TM32ASM_DuplicateString("UNEVALUATED");
                                 
                                 if (preprocessor->verbose)
                                 {
@@ -1739,7 +1740,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                         }
                         else
                         {
-                            initialValue = "0";  // Empty expression defaults to 0
+                            initialValue = TM32ASM_DuplicateString("0");  // Empty expression defaults to 0
                         }
                         
                         TM32ASM_DestroyTokenStream(expressionTokens);
@@ -1778,9 +1779,13 @@ static bool TM32ASM_PassSymbolDeclaration (
                         if (!TM32ASM_AddSymbol(preprocessor, &symbol))
                         {
                             TM32ASM_LogError("Failed to add variable symbol '%s'", nameToken->lexeme);
+                            TM32ASM_Destroy(initialValue);  // Clean up allocated string
                             TM32ASM_DestroyTokenStream(outputStream);
                             return false;
                         }
+                        
+                        // Free the original allocated string since AddSymbol made a copy
+                        TM32ASM_Destroy(initialValue);
                         
                         if (preprocessor->verbose)
                         {
@@ -1880,7 +1885,7 @@ static bool TM32ASM_PassSymbolDeclaration (
                         else
                         {
                             // Could not evaluate now - will need forward reference resolution
-                            constantValue = "UNEVALUATED";
+                            constantValue = TM32ASM_DuplicateString("UNEVALUATED");
                             
                             if (preprocessor->verbose)
                             {
@@ -1912,9 +1917,13 @@ static bool TM32ASM_PassSymbolDeclaration (
                     if (!TM32ASM_AddSymbol(preprocessor, &symbol))
                     {
                         TM32ASM_LogError("Failed to add constant symbol '%s'", nameToken->lexeme);
+                        TM32ASM_Destroy(constantValue);  // Clean up allocated string
                         TM32ASM_DestroyTokenStream(outputStream);
                         return false;
                     }
+                    
+                    // Free the original allocated string since AddSymbol made a copy
+                    TM32ASM_Destroy(constantValue);
                     
                     if (preprocessor->verbose)
                     {
@@ -6155,6 +6164,432 @@ static bool TM32ASM_ParseExpression (
 );
 
 /**
+ * @brief   Evaluates a built-in function call.
+ */
+static bool TM32ASM_EvaluateFunction (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    TM32ASM_FunctionType    funcType,
+    int64_t*                result
+)
+{
+    // Parse function arguments
+    int64_t args[3] = {0}; // Max 3 arguments for any function
+    int argCount = 0;
+    bool expectingArg = true;
+    
+    // Parse arguments until closing parenthesis
+    while (*currentIndex < endIndex && *currentIndex < tokenStream->tokenCount)
+    {
+        TM32ASM_Token* token = tokenStream->tokens[*currentIndex];
+        
+        if (token->type == TM32ASM_TT_CLOSE_PARENTHESIS)
+        {
+            (*currentIndex)++; // Consume closing parenthesis
+            break;
+        }
+        
+        if (token->type == TM32ASM_TT_COMMA)
+        {
+            if (expectingArg)
+            {
+                TM32ASM_LogError("Unexpected comma in function arguments");
+                return false;
+            }
+            (*currentIndex)++;
+            expectingArg = true;
+            continue;
+        }
+        
+        if (expectingArg)
+        {
+            if (argCount >= 3)
+            {
+                TM32ASM_LogError("Too many arguments for function");
+                return false;
+            }
+            
+            // For string functions, handle string literals
+            if ((funcType >= TM32ASM_FT_STRLEN && funcType <= TM32ASM_FT_STRBYTE) ||
+                funcType == TM32ASM_FT_DEFINED || funcType == TM32ASM_FT_ISCONST || funcType == TM32ASM_FT_ISVARIABLE)
+            {
+                if (token->type == TM32ASM_TT_STRING)
+                {
+                    // Store string value (we'll handle string processing in function evaluation)
+                    args[argCount] = (int64_t)(uintptr_t)token->lexeme;
+                    argCount++;
+                    (*currentIndex)++;
+                    expectingArg = false;
+                    continue;
+                }
+                else if ((funcType == TM32ASM_FT_DEFINED || funcType == TM32ASM_FT_ISCONST || funcType == TM32ASM_FT_ISVARIABLE) && 
+                         token->type == TM32ASM_TT_IDENTIFIER)
+                {
+                    // For meta functions, accept identifier
+                    args[argCount] = (int64_t)(uintptr_t)token->lexeme;
+                    argCount++;
+                    (*currentIndex)++;
+                    expectingArg = false;
+                    continue;
+                }
+            }
+            
+            // Parse numeric expression
+            if (!TM32ASM_ParseExpression(preprocessor, tokenStream, currentIndex, endIndex, &args[argCount]))
+            {
+                return false;
+            }
+            argCount++;
+            expectingArg = false;
+        }
+        else
+        {
+            TM32ASM_LogError("Expected comma or ')' in function arguments");
+            return false;
+        }
+    }
+    
+    // Check for unclosed parenthesis
+    if (*currentIndex == 0 || tokenStream->tokens[*currentIndex - 1]->type != TM32ASM_TT_CLOSE_PARENTHESIS)
+    {
+        TM32ASM_LogError("Expected ')' to close function arguments");
+        return false;
+    }
+    
+    // Evaluate the function based on type
+    switch (funcType)
+    {
+        case TM32ASM_FT_HIGH:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("high() function requires exactly 1 argument");
+                return false;
+            }
+            *result = (args[0] >> 16) & 0xFFFF;
+            return true;
+            
+        case TM32ASM_FT_LOW:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("low() function requires exactly 1 argument");
+                return false;
+            }
+            *result = args[0] & 0xFFFF;
+            return true;
+            
+        case TM32ASM_FT_BITWIDTH:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("bitwidth() function requires exactly 1 argument");
+                return false;
+            }
+            {
+                int64_t value = args[0];
+                if (value == 0) {
+                    *result = 1;
+                } else {
+                    int bits = 0;
+                    uint64_t absVal = (value < 0) ? (uint64_t)(-value) : (uint64_t)value;
+                    while (absVal > 0) {
+                        bits++;
+                        absVal >>= 1;
+                    }
+                    if (value < 0) bits++; // Add sign bit
+                    *result = bits;
+                }
+            }
+            return true;
+            
+        case TM32ASM_FT_INTEGER:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("integer() function requires exactly 1 argument");
+                return false;
+            }
+            // For integer values, just return the integer part (no fractional part in our system)
+            *result = args[0];
+            return true;
+            
+        case TM32ASM_FT_FRACTION:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("fraction() function requires exactly 1 argument");
+                return false;
+            }
+            // For integer values, fractional part is always 0
+            *result = 0;
+            return true;
+            
+        case TM32ASM_FT_ROUND:
+        case TM32ASM_FT_CEIL:
+        case TM32ASM_FT_FLOOR:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("Rounding function requires exactly 1 argument");
+                return false;
+            }
+            // For integer values, these functions return the value unchanged
+            *result = args[0];
+            return true;
+            
+        case TM32ASM_FT_SIN:
+        case TM32ASM_FT_COS:
+        case TM32ASM_FT_TAN:
+        case TM32ASM_FT_ASIN:
+        case TM32ASM_FT_ACOS:
+        case TM32ASM_FT_ATAN:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("Trigonometric function requires exactly 1 argument");
+                return false;
+            }
+            // Trigonometric functions - for assembly, we'll return rounded results
+            {
+                double angle = (double)args[0];
+                double resultValue = 0.0;
+                
+                switch (funcType)
+                {
+                    case TM32ASM_FT_SIN:  resultValue = sin(angle); break;
+                    case TM32ASM_FT_COS:  resultValue = cos(angle); break;
+                    case TM32ASM_FT_TAN:  resultValue = tan(angle); break;
+                    case TM32ASM_FT_ASIN: resultValue = asin(angle); break;
+                    case TM32ASM_FT_ACOS: resultValue = acos(angle); break;
+                    case TM32ASM_FT_ATAN: resultValue = atan(angle); break;
+                    default: break;
+                }
+                
+                *result = (int64_t)round(resultValue * 65536.0); // Fixed point representation
+            }
+            return true;
+            
+        case TM32ASM_FT_ATAN2:
+            if (argCount != 2)
+            {
+                TM32ASM_LogError("atan2() function requires exactly 2 arguments");
+                return false;
+            }
+            {
+                double y = (double)args[0];
+                double x = (double)args[1];
+                double resultValue = atan2(y, x);
+                *result = (int64_t)round(resultValue * 65536.0); // Fixed point representation
+            }
+            return true;
+            
+        case TM32ASM_FT_STRLEN:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("strlen() function requires exactly 1 argument");
+                return false;
+            }
+            {
+                const char* str = (const char*)(uintptr_t)args[0];
+                if (str == NULL || strlen(str) < 2 || str[0] != '"' || str[strlen(str) - 1] != '"')
+                {
+                    TM32ASM_LogError("strlen() function requires a string argument");
+                    return false;
+                }
+                // Return length without quotes
+                *result = strlen(str) - 2;
+            }
+            return true;
+            
+        case TM32ASM_FT_STRUPPER:
+        case TM32ASM_FT_STRLOWER:
+        case TM32ASM_FT_STRCAT:
+        case TM32ASM_FT_STRCMP:
+        case TM32ASM_FT_STRFIND:
+        case TM32ASM_FT_STRRFIND:
+            TM32ASM_LogError("String manipulation functions not yet implemented in expressions");
+            return false;
+            
+        case TM32ASM_FT_STRBYTE:
+            if (argCount != 2)
+            {
+                TM32ASM_LogError("strbyte() function requires exactly 2 arguments");
+                return false;
+            }
+            {
+                const char* str = (const char*)(uintptr_t)args[0];
+                int64_t index = args[1];
+                
+                if (str == NULL || strlen(str) < 2 || str[0] != '"' || str[strlen(str) - 1] != '"')
+                {
+                    TM32ASM_LogError("strbyte() function requires a string as first argument");
+                    return false;
+                }
+                
+                size_t strLen = strlen(str) - 2; // Length without quotes
+                if (index < 0 || (size_t)index >= strLen)
+                {
+                    TM32ASM_LogError("strbyte() index out of range");
+                    return false;
+                }
+                
+                *result = (unsigned char)str[index + 1]; // +1 to skip opening quote
+            }
+            return true;
+            
+        case TM32ASM_FT_DEFINED:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("defined() function requires exactly 1 argument");
+                return false;
+            }
+            {
+                const char* name = (const char*)(uintptr_t)args[0];
+                if (name == NULL)
+                {
+                    TM32ASM_LogError("defined() function requires a symbol name");
+                    return false;
+                }
+                
+                // Remove quotes if it's a string
+                char* symbolName = NULL;
+                if (name[0] == '"' && name[strlen(name) - 1] == '"')
+                {
+                    size_t len = strlen(name) - 2;
+                    symbolName = malloc(len + 1);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                    strncpy(symbolName, name + 1, len);
+                    symbolName[len] = '\0';
+                }
+                else
+                {
+                    symbolName = strdup(name);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                }
+                
+                TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, symbolName);
+                *result = (symbol != NULL) ? 1 : 0;
+                free(symbolName);
+            }
+            return true;
+            
+        case TM32ASM_FT_ISCONST:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("isconst() function requires exactly 1 argument");
+                return false;
+            }
+            {
+                const char* name = (const char*)(uintptr_t)args[0];
+                if (name == NULL)
+                {
+                    TM32ASM_LogError("isconst() function requires a symbol name");
+                    return false;
+                }
+                
+                // Remove quotes if it's a string
+                char* symbolName = NULL;
+                if (name[0] == '"' && name[strlen(name) - 1] == '"')
+                {
+                    size_t len = strlen(name) - 2;
+                    symbolName = malloc(len + 1);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                    strncpy(symbolName, name + 1, len);
+                    symbolName[len] = '\0';
+                }
+                else
+                {
+                    symbolName = strdup(name);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                }
+                
+                TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, symbolName);
+                *result = (symbol != NULL && symbol->type == TM32ASM_ST_CONSTANT) ? 1 : 0;
+                free(symbolName);
+            }
+            return true;
+            
+        case TM32ASM_FT_ISVARIABLE:
+            if (argCount != 1)
+            {
+                TM32ASM_LogError("isvariable() function requires exactly 1 argument");
+                return false;
+            }
+            {
+                const char* name = (const char*)(uintptr_t)args[0];
+                if (name == NULL)
+                {
+                    TM32ASM_LogError("isvariable() function requires a symbol name");
+                    return false;
+                }
+                
+                // Remove quotes if it's a string
+                char* symbolName = NULL;
+                if (name[0] == '"' && name[strlen(name) - 1] == '"')
+                {
+                    size_t len = strlen(name) - 2;
+                    symbolName = malloc(len + 1);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                    strncpy(symbolName, name + 1, len);
+                    symbolName[len] = '\0';
+                }
+                else
+                {
+                    symbolName = strdup(name);
+                    if (symbolName == NULL)
+                    {
+                        TM32ASM_LogError("Memory allocation failed");
+                        return false;
+                    }
+                }
+                
+                TM32ASM_Symbol* symbol = TM32ASM_FindSymbol(preprocessor, symbolName);
+                *result = (symbol != NULL && symbol->type == TM32ASM_ST_VARIABLE) ? 1 : 0;
+                free(symbolName);
+            }
+            return true;
+            
+        case TM32ASM_FT_SECTION:
+        case TM32ASM_FT_ORIGIN:
+        case TM32ASM_FT_SIZEOF:
+        case TM32ASM_FT_STARTOF:
+            TM32ASM_LogError("Meta functions not yet implemented in expressions");
+            return false;
+            
+        default:
+            TM32ASM_LogError("Unknown function type");
+            return false;
+    }
+}
+
+/**
+ * @brief   Forward declaration for recursive expression parsing.
+ */
+static bool TM32ASM_ParseExpression (
+    TM32ASM_Preprocessor*   preprocessor,
+    TM32ASM_TokenStream*    tokenStream,
+    size_t*                 currentIndex,
+    size_t                  endIndex,
+    int64_t*                result
+);
+
+/**
  * @brief   Forward declaration for bitwise OR parsing.
  */
 static bool TM32ASM_ParseBitwiseOr (
@@ -6298,6 +6733,30 @@ static bool TM32ASM_ParsePrimary (
         {
             // Unary plus
             return TM32ASM_ParsePrimary(preprocessor, tokenStream, currentIndex, endIndex, result);
+        }
+        
+        case TM32ASM_TT_FUNCTION:
+        {
+            // Handle function call
+            TM32ASM_FunctionType funcType = (TM32ASM_FunctionType)token->param;
+            
+            // Expect opening parenthesis
+            if (*currentIndex >= endIndex || *currentIndex >= tokenStream->tokenCount)
+            {
+                TM32ASM_LogError("Expected '(' after function name");
+                return false;
+            }
+            
+            TM32ASM_Token* openParen = tokenStream->tokens[*currentIndex];
+            if (openParen->type != TM32ASM_TT_OPEN_PARENTHESIS)
+            {
+                TM32ASM_LogError("Expected '(' after function name");
+                return false;
+            }
+            (*currentIndex)++;
+            
+            // Evaluate function
+            return TM32ASM_EvaluateFunction(preprocessor, tokenStream, currentIndex, endIndex, funcType, result);
         }
         
         case TM32ASM_TT_BITWISE_NOT:
