@@ -39,3 +39,13 @@
 
 # debug information files
 *.dwo
+
+# VS Code files
+.vscode/
+
+# Build Output
+build/
+Makefile
+*.make
+*.mk
+*.sln
